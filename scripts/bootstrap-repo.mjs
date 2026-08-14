@@ -2160,23 +2160,81 @@ Target: feature-complete 2026-09-05.
 - **T-026** orderrouting-service: simulated OMS, route proposal, best-execution policy boundary
   halt.
 - **T-027** Hosted Foundry agents for each lane and the MCP tool surface. An ADR is required for
-  any prompt-only agent.
+  any prompt-only agent. Broken out below; see `docs/agent-architecture.md`.
+  - **T-027a** **Spike first.** Stand up one trivial hosted agent and confirm the Foundry tool-count
+    and step-depth limits, thread creation latency, and that the project identity can reach the
+    router but not a model deployment. Everything else in this phase assumes all four. Discover it
+    now, not during T-025.
+  - **T-027b** Agent host pattern in the lane services: thread-per-request lifecycle, correlationId
+    propagation into every tool call and router call, step budget with a halt-and-report path.
+  - **T-027c** MCP tool server conventions: schema definition, identity, structured errors,
+    idempotency, and the audit record emitted per tool call. One shared implementation; the lanes
+    supply tools, not plumbing.
+  - **T-027d** Research agent — `search_corpus`, `fetch_chunk`, `list_sources`. Refusal is a
+    success path, not an error path.
+  - **T-027e** Surveillance agent — `fetch_alert_batch`, `fetch_communications`,
+    `fetch_trade_context`, `submit_for_approval`. Chunked concurrent scoring with bounded
+    parallelism. **Ranking is applied by deterministic code from model-produced scores**, which is
+    what makes AC-6 reproducibility achievable.
+  - **T-027f** Order routing agent — `fetch_order`, `fetch_venue_liquidity`,
+    `evaluate_best_execution_policy`, `submit_for_approval`. Policy evaluation is deterministic code
+    the agent explains, not a judgement the agent makes.
+  - **T-027g** Agent failure-mode matrix implemented and demonstrable: tool error, model timeout, no
+    eligible model, step-budget exhaustion. **No silent retry on a different tier** — it would
+    corrupt the cost figures the scoreboard claims.
+  - **T-027h** Determinism harness: fixed seeds, pinned temperature, recorded transcripts. Feeds the
+    no-Azure fallback in T-040.
 
 ## Phase 5 — Scoreboard UI (day 12 to 17)
 
+Twelve screens; see `docs/ui-design.md` for the inventory, component layout, and required states.
+Three of the four wow moments are screens in this phase.
+
 - **T-028** Vite, React, and TypeScript shell; Entra authentication; role-aware navigation.
+  - **T-028a** App shell, routing, error boundary, and the projector-grade type scale. Every screen
+    has one number that is deliberately the largest thing on it.
+  - **T-028b** MSAL auth, `Router.Invoke` / `Router.Read` / `Approver` role guards. Unauthorised
+    navigation is hidden; unauthorised *actions* render disabled with a stated reason — Beat 6
+    needs something visible to refuse.
+  - **T-028c** API client, token acquisition, and **types generated from `contracts/`**. Not
+    hand-written; hand-written types drift and the drift surfaces on stage.
+  - **T-028d** The five required states as shared primitives: loading, empty, error, partial,
+    degraded. Build these before the screens that need them.
+  - **T-028e** Request console (screen 1), including data classification on the request.
 - **T-029** Live scoreboard: cost, latency, tier, rationale, quality, within the five-second
   freshness budget.
+  - **T-029a** Scoreboard view with TanStack Query 5s polling, `refetchOnWindowFocus` disabled, and
+    a visible data timestamp rather than a spinner.
+  - **T-029b** Decision detail (screen 4) showing the full record including complexity inputs.
+  - **T-029c** **Measure AC-5 end to end.** If Application Insights cannot make the 5s budget,
+    switch to the Cosmos change-feed fallback here — that is what ADR 004 built it for — and render
+    the degraded-source label.
 - **T-030** Comparison view: aggregate cost against the Premium baseline with a percentage delta.
-  **Primary wow moment B.**
+  **Primary wow moment B.** One dominant number; per-request table drillable mid-sentence, with the
+  rationale as a plain sentence naming the deciding factor.
 - **T-031** Surveillance triage queue view. **Primary wow moment C.**
+  - **T-031a** Virtualised 500+ row queue. Unvirtualised lists stutter on projector hardware and the
+    stutter reads as "this does not scale."
+  - **T-031b** Alert detail (screen 6) with evidence set and rationale.
+  - **T-031c** Visible seed indicator supporting the AC-6 reproducibility claim on stage.
 - **T-032** Approval queue with evidence packet rendering and visible segregation-of-duties
   blocking.
 - **T-033** Research view with inline citations, coverage percentage, and the unattributable-claims
-  panel. **Secondary wow moment D.**
-- **T-034** Simulated-OMS labelling everywhere order execution appears.
+  panel. **Secondary wow moment D.** The panel is always present and states "no unattributable
+  claims" when empty — a panel that only appears on failure teaches the audience it is an error.
+- **T-034** Simulated-OMS labelling everywhere order execution appears, on the record itself so a
+  screenshot out of context is still honest.
+- **T-042** **Policy sets screen (screen 12).** Previously unscheduled. Beat 5 has to change policy
+  *somewhere*, and doing it in the Azure portal breaks the claim that governance is a first-class
+  surface. Read-mostly with a per-vendor approval toggle is sufficient.
+- **T-043** Audit reconstruction view (screen 11) for Beat 8. Takes a correlationId and renders the
+  full chain from the AC-8 endpoint. Must handle an arbitrary audience-chosen id with no special
+  casing.
 
 ## Phase 6 — Hardening and rehearsal (day 17 to 22, to 9/5)
+
+Task numbers T-042 and T-043 belong to Phase 5 above; Phase 6 keeps its original numbering so
+existing references elsewhere in the repository stay valid.
 
 - **T-035** Playwright end-to-end coverage of AC-2, AC-3, and AC-5.
 - **T-036** Terraform policy tests; Checkov clean; verify zero subscription-scoped roles.
@@ -2331,8 +2389,12 @@ mechanism to express it. They can write a standard. They cannot enforce one.
 | Document | Purpose |
 |---|---|
 | architecture.md | How the system is put together and why |
+| agent-architecture.md | The three lane agents, their tools, and where their authority stops |
+| ui-design.md | Screen inventory, component and state architecture, required states |
 | threat-model.md | What can go wrong, and what stops it |
 | demo-runbook.md | The 9/10 narrative, timings, and failure recovery |
+| decisions-needed.md | Forks between requirements.md and the locked decisions |
+| requirements.md | The original demo script this repository is built from |
 | adr/ | Architecture decision records |
 
 Governing documents live outside this directory:
@@ -3348,6 +3410,266 @@ application. But do not give surveillance and order routing equal stage time —
 as proof of generality.
 
 **Needs confirmation, not a decision,** unless you disagree.
+
+===== FILE: docs/agent-architecture.md =====
+# Agent architecture
+
+How the three lane agents are built, what tools they hold, and where their authority stops.
+
+Governed by ADR 005 (hosted Foundry agents over prompt agents) and Principle V (every model call
+goes through the router).
+
+## The shape of an agent
+
+Each lane is one hosted Foundry agent. The lane service is not the agent — it is the agent's
+**custodian**: it owns the thread, supplies the tools, enforces the approval halt, and writes the
+audit record. The agent reasons; the service is accountable.
+
+```text
+  lane service (C#, Container Apps)
+      |
+      |  1. creates thread, stamps correlationId
+      |  2. submits the business request
+      v
+  hosted Foundry agent  --- tool call --->  MCP tool server (in the lane service)
+      |                                          |
+      |  3. model invocation                     |  4. tools reach data, never models
+      v                                          v
+  router-service  ---> APIM ---> model      Cosmos / AI Search / simulated OMS
+```
+
+Two boundaries are load-bearing and both are enforced by network policy, not convention:
+
+1. **The agent's model access is the router's**, because the agent runs under the Foundry project
+   identity and only the router holds the role assignment that permits a model deployment call.
+2. **Tools reach data, never models.** No MCP tool wraps a model invocation. If a tool needs
+   model output it calls the router like any other caller, and that call is routed and recorded.
+
+## Why the router is not an agent
+
+The exchange is deterministic code — policy evaluation, complexity scoring, tier selection. It is
+the component a compliance audience will interrogate line by line, and it is the assembly under a
+coverage gate. Making it an agent would mean explaining why the thing that enforces governance is
+itself non-deterministic. It is a service, permanently.
+
+## Agent inventory
+
+| Agent | Lane | Decomposes work | Halts for approval | Wow moment |
+|---|---|---|---|---|
+| Research | research-service | Yes — retrieve, then synthesise per claim | No (read-only) | D (secondary) |
+| Surveillance | surveillance-service | Yes — triage, then assemble evidence | Yes — escalation memo | C (primary) |
+| Order routing | orderrouting-service | No — single proposal | Yes — every route | — |
+
+### Research agent
+
+**Job.** Answer an analyst question from the synthetic corpus with a citation on every claim.
+
+**Tools.** `search_corpus`, `fetch_chunk`, `list_sources`. All read-only.
+
+**The hard requirement is refusal.** Principle III means an unattributable claim is withheld and
+reported, not softened. The agent must be able to return "I could not attribute this" as a
+success, and the UI must show it as one. An agent that always answers has failed AC-3.
+
+**Prompt-injection posture.** Retrieved chunks are data, never instructions. Chunks are wrapped in
+a delimited envelope and the system prompt states that content inside it carries no tool authority.
+Detections are logged as audit events (T-024). Assume the corpus contains an injection attempt,
+because a demo corpus that has never been attacked proves nothing.
+
+### Surveillance agent
+
+**Job.** Rank a batch of at least 500 synthetic alerts, attach evidence and a rationale to each,
+and draft an escalation memo for the top-ranked.
+
+**Tools.** `fetch_alert_batch`, `fetch_communications`, `fetch_trade_context`, `submit_for_approval`.
+
+**Reproducibility is the constraint that shapes this agent.** AC-6 requires identical ranking for a
+fixed seed and input set. A free-running agent over 500 alerts will not deliver that. The agent
+scores alerts against a fixed rubric with the temperature pinned, and the ordering is applied by
+the service, not the model. **The model produces scores; deterministic code produces the ranking.**
+
+**Batch shape.** 500 alerts do not fit one context window and should not try to. The service
+chunks them, runs scoring concurrently with a bounded degree of parallelism, and each chunk is
+independently routed — which is also what makes the cost scoreboard interesting.
+
+**`submit_for_approval` is the only tool with side effects in the entire system.** It writes a
+proposal, never a state change. No alert changes state without a human.
+
+### Order routing agent
+
+**Job.** Propose a venue for a synthetic order with a best-execution justification.
+
+**Tools.** `fetch_order`, `fetch_venue_liquidity`, `evaluate_best_execution_policy`,
+`submit_for_approval`.
+
+**`evaluate_best_execution_policy` is deliberately not the agent's judgement.** Policy evaluation
+is deterministic code the agent calls; the agent explains the result, it does not decide it. A
+breach halts with the policy named. This is the same separation as the router: the model reasons,
+code decides what is permitted.
+
+Every surface that shows execution is labelled simulated (T-034). Not as a disclaimer in a corner
+— on the record itself, so a screenshot taken out of context is still honest.
+
+## Cross-cutting rules
+
+**Correlation.** The lane service stamps `correlationId` before thread creation and passes it to
+every tool call and every router call. AC-8 requires one-query reconstruction; a break anywhere in
+that chain makes it a two-query reconstruction and fails.
+
+**Thread lifecycle.** One thread per business request. Threads are not reused across requests —
+carried-over context makes cost and reproducibility unexplainable, and both are demo claims.
+
+**Failure modes** each need a defined, demonstrable behaviour:
+
+| Failure | Behaviour |
+|---|---|
+| Tool error | Surface to the agent; agent may retry once, then reports partial results with the gap named |
+| Model timeout | Router returns a routing failure; the lane reports it. **No silent retry on a different tier** — that would corrupt the cost figures |
+| No eligible model (policy) | Explicit refusal naming the exclusions. Never a fallback to an unapproved model |
+| Agent exceeds step budget | Halt, return partial work, log. An agent that loops on stage is worse than one that stops |
+
+**Determinism for rehearsal.** Fixed seeds, pinned temperature, recorded fixtures. T-040's
+no-Azure fallback replays recorded agent transcripts, so the narrative survives losing the network.
+
+## Open questions
+
+1. Foundry hosted agents cap tool count and step depth. The surveillance agent is closest to those
+   limits — verify early (T-027a) rather than discovering it during T-025.
+2. Whether Feature 002's intent classifier is an agent or a fixed cheap deployment. Current
+   position: not an agent, because routing the thing that decides routing is circular.
+
+===== FILE: docs/ui-design.md =====
+# Scoreboard UI design
+
+Vite, React, TypeScript. Entra authentication, role-aware navigation.
+
+Three of the four wow moments are screens in this application. The UI is not a viewer over the
+interesting part of the system — for the audience, it **is** the system. Everything below is
+written for a projector in a room of sceptical people, not for a desk.
+
+## Design constraints
+
+**The audience reads this from ten feet away.** Dense tables and 12px labels are unreadable on a
+projector. Type scale starts larger than a normal admin tool, and every screen has one number that
+is deliberately the largest thing on it.
+
+**Nothing may look rehearsed.** No pre-baked screenshots, no seeded animations. If a value is on
+screen it came from the API just now. Beat 8 has an audience member choose a record at random;
+that only survives if the UI never special-cases anything.
+
+**Every claim on screen is drillable.** A number a presenter cannot open is a number the audience
+assumes is decorative. Cost, rank, and quality all open to the record behind them.
+
+**Degradation is visible, not silent.** If the scoreboard falls back to the Cosmos change feed
+(ADR 004), the UI says so. A demo that hides its own failure is one bad question from collapse.
+
+## Screen inventory
+
+| # | Screen | Route | Roles | Task | Beat |
+|---|---|---|---|---|---|
+| 1 | Request console | `/` | Router.Invoke | T-028 | 3, 5 |
+| 2 | Live scoreboard | `/scoreboard` | Router.Read | T-029 | 3 |
+| 3 | Cost comparison | `/scoreboard/comparison` | Router.Read | T-030 | 3 — **wow B** |
+| 4 | Decision detail | `/decisions/:id` | Router.Read | T-029 | 3, 8 |
+| 5 | Surveillance triage | `/surveillance` | Router.Read | T-031 | 4 — **wow C** |
+| 6 | Alert detail | `/surveillance/:id` | Router.Read | T-031 | 4 |
+| 7 | Approval queue | `/approvals` | Approver | T-032 | 6 |
+| 8 | Approval detail | `/approvals/:id` | Approver | T-032 | 6 |
+| 9 | Research | `/research` | Router.Invoke | T-033 | 7 — **wow D** |
+| 10 | Order routing | `/orders` | Router.Invoke | T-034 | — |
+| 11 | Audit reconstruction | `/audit/:correlationId` | Router.Read | T-020 | 8 |
+| 12 | Policy sets | `/policy` | Approver | new | 5 |
+
+Screen 12 does not exist in the current task list. It is required for Beat 5 — the policy swap has
+to happen *somewhere*, and doing it in the Azure portal breaks the narrative that governance is a
+first-class surface.
+
+## Screens that carry a wow moment
+
+### 3 — Cost comparison (wow B)
+
+One number dominates: **percentage saved against an all-premium baseline.** Everything else is
+supporting evidence.
+
+Below it, a per-request table with tier, cost, latency, and rationale, and a bar showing actual
+against baseline. The presenter drills one row mid-sentence and reads the rationale aloud, so the
+rationale must be a plain sentence naming the deciding factor — not a JSON blob and not a score.
+
+Refresh is 5 seconds (AC-5), and the UI shows the timestamp of the data, not a spinner. A stale
+number that admits it is stale beats a fresh-looking lie.
+
+### 5 — Surveillance triage (wow C)
+
+500+ alerts, ranked, with rationale and evidence count per row. Virtualised list — 500 DOM rows
+will stutter on projector hardware and the stutter reads as "this doesn't scale."
+
+The rank column shows the score and is sortable, but **defaults to model rank**, because the point
+is that the ranking is the product. A visible seed indicator supports the reproducibility claim in
+AC-6: same seed, same order, provable on stage.
+
+### 9 — Research (wow D)
+
+Inline citations rendered as clickable superscripts that open the source chunk. A coverage
+percentage in the header.
+
+**The unattributable-claims panel is the point of this screen**, not a footnote. It is always
+present, and when empty it says "no unattributable claims" rather than disappearing. A panel that
+only appears on failure teaches the audience it is an error state; a panel that is always there
+teaches them it is a control.
+
+## Component and state architecture
+
+```text
+src/webui/src/
+  app/            router, auth provider, role guards, error boundary
+  components/     presentational only, no fetching
+  features/       one folder per screen: hooks, queries, view
+  lib/            api client, Entra token acquisition, formatters
+  types/          generated from contracts/*.md schemas
+```
+
+**Data fetching.** TanStack Query. Polling at 5s for live views with `refetchOnWindowFocus`
+disabled — a presenter alt-tabbing must not trigger a visible refetch mid-sentence.
+
+**Why polling and not push.** SignalR would be lower latency, but it adds a service to the private
+network, a reconnect path to rehearse, and a new failure mode on stage. The budget is 5 seconds
+and polling meets it. Revisit only if AC-5 measurements fail (T-029).
+
+**Types are generated from the contracts**, not hand-written. Hand-written types drift from the API
+and the drift surfaces during a demo.
+
+**No global state store.** Server state lives in TanStack Query; UI state is local. There is no
+client state complex enough to justify more.
+
+## Required states
+
+Every data view implements all five. Missing states are how demos break — the empty state nobody
+built is the one that renders during the live run.
+
+| State | Requirement |
+|---|---|
+| Loading | Skeleton matching final layout. No layout shift on a projector |
+| Empty | Explains what would populate it and how to trigger it |
+| Error | Names what failed and what still works. Never a bare "Something went wrong" |
+| Partial | Some lanes returned, some did not — show what exists, mark what is missing |
+| Degraded | Fallback data source or stale data, labelled inline |
+
+## Auth and roles
+
+MSAL browser, Entra app roles: `Router.Invoke`, `Router.Read`, `Approver`.
+
+**Unauthorised navigation is hidden, and unauthorised actions are visibly blocked.** These are
+different on purpose. Beat 6 requires showing a user who lacks `Approver` being refused — if the
+button were merely hidden there would be nothing to demonstrate. The approve control renders
+disabled with the reason stated.
+
+## Open questions
+
+1. Screen 12 (policy sets) is unscheduled. Beat 5 needs it, even if read-mostly with a single
+   vendor toggle.
+2. Whether the request console exposes data classification as a user control. It is needed for the
+   Restricted-data demonstration, but it edges towards the application choosing routing inputs.
+   Current position: classification is a property of the *request*, not a routing preference, so
+   exposing it is consistent with Principle IV.
 ===== FILE: scripts/policy-no-public-endpoints.sh =====
 #!/usr/bin/env bash
 # Fails if any Terraform resource exposes a public data-plane endpoint.
