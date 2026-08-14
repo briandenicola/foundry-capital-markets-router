@@ -20,7 +20,7 @@ public class PolicyGateTests
         },
         new()
         {
-            Tier = ModelTier.Standard, Deployment = "grok-4", CostPerRequestUsd = 0.075m,
+            Tier = ModelTier.Standard, Deployment = "grok-4.3", CostPerRequestUsd = 0.075m,
             Vendor = ModelVendor.XAI, Serving = ServingMode.Serverless,
         },
         new()

@@ -58,7 +58,7 @@ variable "model_catalog" {
     }
     xai = {
       vendor               = "xAI"
-      model                = "grok-4"
+      model                = "grok-4.3"
       serving              = "serverless"
       cost_per_request_usd = 0.075
     }

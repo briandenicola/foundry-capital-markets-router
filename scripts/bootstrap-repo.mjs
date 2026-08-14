@@ -575,7 +575,7 @@ MODEL_AOAI_ECONOMY=gpt-5.4-mini
 MODEL_AOAI_STANDARD=gpt-5.4
 MODEL_AOAI_PREMIUM=gpt-5.6-sol
 MODEL_ANTHROPIC=claude-sonnet-4-5
-MODEL_XAI=grok-4
+MODEL_XAI=grok-4.3
 MODEL_EMBEDDING=text-embedding-3-large
 
 # Open-weight models served on Foundry managed compute (PREVIEW).
@@ -3210,6 +3210,32 @@ three serverless vendors, losing only the Restricted-data beat. **Provision mana
 ahead of the demo and leave it up.** Treat it as long-lived infrastructure, not as something the
 rebuild path creates.
 
+## Verification status (checked 2026-08-14, eastus2)
+
+Model names in `infrastructure/variables.tf` were checked against
+`az cognitiveservices model list -l eastus2`:
+
+| Catalog entry | Status |
+|---|---|
+| `gpt-5.4-mini`, `gpt-5.4`, `gpt-5.6-sol` | Available |
+| `claude-sonnet-4-5` | Available |
+| `grok-4` | **Not available** — corrected to `grok-4.3` |
+
+**GPU quota in eastus2 is zero.** Confirmed by `az vm list-usage`:
+
+| Family | Used | Limit |
+|---|---|---|
+| Standard NCADS_A100_v4 | 0 | **0** |
+| Standard NCadsH100v5 | 0 | **0** |
+| Standard NCADSA10v4 | 0 | **0** |
+
+Managed compute therefore **cannot be provisioned today**. A quota increase must be requested and
+approved before `enable_managed_compute = true` will plan successfully. Quota requests are not
+instant; treat this as the critical path for the Restricted-data beat.
+
+Until quota is granted, run with `enable_managed_compute = false`. Three serverless vendors still
+demonstrate the exchange; only the Restricted-data destination is missing.
+
 ## Alternatives considered
 
 - **Single vendor, three tiers.** Rejected: it cannot carry the anti-lock-in argument, which is
@@ -3609,7 +3635,7 @@ variable "model_catalog" {
     }
     xai = {
       vendor               = "xAI"
-      model                = "grok-4"
+      model                = "grok-4.3"
       serving              = "serverless"
       cost_per_request_usd = 0.075
     }
@@ -5472,7 +5498,7 @@ public class PolicyGateTests
         },
         new()
         {
-            Tier = ModelTier.Standard, Deployment = "grok-4", CostPerRequestUsd = 0.075m,
+            Tier = ModelTier.Standard, Deployment = "grok-4.3", CostPerRequestUsd = 0.075m,
             Vendor = ModelVendor.XAI, Serving = ServingMode.Serverless,
         },
         new()
