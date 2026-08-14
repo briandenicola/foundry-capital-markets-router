@@ -1,0 +1,36 @@
+{
+  "agents": {
+    "Rusty": {
+      "persistent_name": "Rusty",
+      "role": "Service & HTTP Engineer",
+      "universe": "Ocean's Eleven",
+      "created_at": "2026-08-14T16:26:21Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "Livingston": {
+      "persistent_name": "Livingston",
+      "role": "Approval Domain Engineer",
+      "universe": "Ocean's Eleven",
+      "created_at": "2026-08-14T16:26:21Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "Basher": {
+      "persistent_name": "Basher",
+      "role": "Contract Test & Quality Gate Engineer",
+      "universe": "Ocean's Eleven",
+      "created_at": "2026-08-14T16:26:21Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "Saul": {
+      "persistent_name": "Saul",
+      "role": "Governance Reviewer",
+      "universe": "Ocean's Eleven",
+      "created_at": "2026-08-14T16:26:21Z",
+      "legacy_named": false,
+      "status": "active"
+    }
+  }
+}

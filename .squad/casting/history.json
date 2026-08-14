@@ -1,0 +1,23 @@
+{
+  "universe_usage_history": [
+    {
+      "universe": "Ocean's Eleven",
+      "assignment_id": "a-2026-08-14-router-core",
+      "used_at": "2026-08-14T16:26:21Z"
+    }
+  ],
+  "assignment_cast_snapshots": {
+    "a-2026-08-14-router-core": {
+      "created_at": "2026-08-14T16:26:21Z",
+      "universe": "Ocean's Eleven",
+      "agent_count": 4,
+      "shape": "small differentiated crew: two implementers on disjoint surfaces, one quality gate, one independent reviewer",
+      "cast": {
+        "Rusty": "Service & HTTP Engineer",
+        "Livingston": "Approval Domain Engineer",
+        "Basher": "Contract Test & Quality Gate Engineer",
+        "Saul": "Governance Reviewer"
+      }
+    }
+  }
+}
