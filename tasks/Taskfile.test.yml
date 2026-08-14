@@ -1,0 +1,42 @@
+version: '3'
+
+tasks:
+  default:
+    desc: Run unit, contract, and integration tests
+    cmds:
+      - task: unit
+      - task: contract
+
+  unit:
+    desc: Run unit tests with coverage collection
+    cmds:
+      - dotnet test --collect:"XPlat Code Coverage" --results-directory ./TestResults
+
+  coverage:
+    desc: Enforce the 70% coverage threshold on router decision logic
+    cmds:
+      - ./scripts/check-coverage.sh 70 Fcmr.Router.Decisions
+
+  contract:
+    desc: Run contract tests against the published API contracts
+    cmds:
+      - dotnet test tests/Fcmr.Contract.Tests
+
+  integration:
+    desc: Run integration tests against a deployed environment
+    cmds:
+      - dotnet test tests/Fcmr.Integration.Tests
+
+  e2e:
+    desc: Run Playwright end-to-end tests (requires a deployed environment)
+    dir: tests/e2e
+    cmds:
+      - npm ci
+      - npx playwright test
+
+  ui:
+    desc: Run scoreboard UI unit tests
+    dir: src/webui
+    cmds:
+      - npm ci
+      - npm run test

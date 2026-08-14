@@ -1,0 +1,102 @@
+name: quality-gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  no-public-endpoints:
+    name: no public endpoint policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enforce private-by-construction
+        run: ./scripts/policy-no-public-endpoints.sh
+
+  terraform:
+    name: terraform lint and scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+      - name: fmt
+        run: terraform fmt -check -recursive infrastructure apps
+      - name: validate infrastructure
+        run: terraform -chdir=infrastructure init -backend=false && terraform -chdir=infrastructure validate
+      - name: validate apps
+        run: terraform -chdir=apps init -backend=false && terraform -chdir=apps validate
+      - name: checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          framework: terraform
+          soft_fail: false
+          check: CKV_AZURE_*
+
+  dotnet:
+    name: dotnet build test coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: restore
+        run: dotnet restore
+      - name: format check
+        run: dotnet format --verify-no-changes --no-restore
+      - name: build
+        run: dotnet build --no-restore --configuration Release
+      - name: test with coverage
+        run: dotnet test --no-build --configuration Release --collect:"XPlat Code Coverage" --results-directory ./TestResults
+      - name: enforce coverage threshold
+        run: ./scripts/check-coverage.sh 70 Fcmr.Router.Decisions
+
+  ui:
+    name: ui lint typecheck test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/webui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsc --noEmit
+      - run: npm run test --if-present
+
+  preview-sdk-pins:
+    name: preview sdk pin guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-task@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: task lint:preview-sdk-pins

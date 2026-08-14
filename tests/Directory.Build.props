@@ -1,0 +1,19 @@
+<Project>
+
+  <!--
+    Inherit the repository-wide settings, including warnings-as-errors, then relax the rules
+    that conflict with test conventions.
+  -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <PropertyGroup>
+    <!--
+      CA1707 forbids underscores in member names. Test methods use the
+      Method_Scenario_ExpectedOutcome convention deliberately: a failing test name should read as
+      a sentence in CI output. Warnings remain errors everywhere else.
+    -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>

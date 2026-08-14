@@ -1,0 +1,55 @@
+version: 2
+
+updates:
+  - package-ecosystem: nuget
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      azure-sdk:
+        patterns: ["Azure.*", "Microsoft.Azure.*", "Microsoft.Identity.*"]
+      testing:
+        patterns: ["xunit*", "FluentAssertions", "NSubstitute", "coverlet*", "Microsoft.NET.Test.Sdk"]
+    ignore:
+      # Preview AI SDKs are exact-pinned deliberately and upgraded by hand.
+      - dependency-name: "Azure.AI.Projects"
+      - dependency-name: "Azure.AI.Agents.Persistent"
+
+  - package-ecosystem: npm
+    directory: "/src/webui"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      react:
+        patterns: ["react", "react-dom", "@types/react*"]
+      build-tooling:
+        patterns: ["vite", "@vitejs/*", "typescript", "eslint*"]
+
+  - package-ecosystem: npm
+    directory: "/tests/e2e"
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: terraform
+    directories:
+      - "/infrastructure"
+      - "/apps"
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directories:
+      - "/src/router-service"
+      - "/src/research-service"
+      - "/src/surveillance-service"
+      - "/src/orderrouting-service"
+      - "/src/webui"
+    schedule:
+      interval: weekly

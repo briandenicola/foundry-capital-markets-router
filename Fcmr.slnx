@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Fcmr.Router.Decisions/Fcmr.Router.Decisions.csproj" />
+    <Project Path="src/router-service/router-service.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Fcmr.Router.Decisions.Tests/Fcmr.Router.Decisions.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,17 @@
+**/bin
+**/obj
+**/node_modules
+**/dist
+**/.terraform
+**/.git
+**/.github
+**/TestResults
+**/coverage
+**/test-results
+**/playwright-report
+.env
+.env.*
+!.env.example
+docs
+specs
+tests

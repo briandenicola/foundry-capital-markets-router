@@ -1,0 +1,62 @@
+version: '3'
+
+env:
+  INFRA_DIR: infrastructure
+  APPS_DIR: apps
+
+vars:
+  REGION: '{{default .DEFAULT_REGION .CLI_ARGS}}'
+
+tasks:
+  default:
+    desc: Show available cloud tasks
+    cmds:
+      - task --list
+
+  up:
+    desc: Stand up the private Azure platform for {{.TITLE}}
+    cmds:
+      - task: guard
+      - task: init
+      - task: apply
+
+  guard:
+    desc: Refuse to proceed if Terraform state is local or the stacks are misaligned
+    cmds:
+      - ./scripts/guard-local-terraform-state.sh
+      - ./scripts/policy-no-public-endpoints.sh
+
+  init:
+    desc: Initialise both Terraform stacks against remote state
+    cmds:
+      - terraform -chdir=./{{.INFRA_DIR}} init -upgrade
+      - terraform -chdir=./{{.APPS_DIR}} init -upgrade
+
+  plan:
+    desc: Plan the platform stack
+    cmds:
+      - terraform -chdir=./{{.INFRA_DIR}} plan -compact-warnings
+        -var "region={{.REGION}}"
+
+  apply:
+    desc: Apply the platform stack
+    cmds:
+      - terraform -chdir=./{{.INFRA_DIR}} apply -auto-approve -compact-warnings
+        -var "region={{.REGION}}"
+
+  outputs:
+    desc: Show platform stack outputs
+    cmds:
+      - terraform -chdir=./{{.INFRA_DIR}} output
+
+  down:
+    desc: Destroy all Azure resources and clean local Terraform artifacts
+    cmds:
+      - az group list --tag Application="{{.TITLE}}" --query "[].name" -o tsv | xargs --no-run-if-empty -ot -n 1 az group delete -y --no-wait -n || true
+      - rm -rf {{.INFRA_DIR}}/.terraform {{.INFRA_DIR}}/terraform.tfstate* || true
+      - rm -rf {{.APPS_DIR}}/.terraform {{.APPS_DIR}}/terraform.tfstate* || true
+
+  prove-private:
+    desc: Demonstrate that public data-plane access is denied (compliance narrative beat)
+    cmds:
+      - ./scripts/prove-private-networking.sh

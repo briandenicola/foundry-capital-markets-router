@@ -1,0 +1,50 @@
+version: '3'
+
+tasks:
+  default:
+    desc: Run all repository lint and policy checks
+    cmds:
+      - task: format
+      - task: terraform
+      - task: policy
+      - task: preview-sdk-pins
+      - task: ui
+
+  format:
+    desc: Verify C# formatting and analyzer compliance
+    cmds:
+      - dotnet format --verify-no-changes
+
+  terraform:
+    desc: Verify Terraform formatting and validity across both stacks
+    cmds:
+      - terraform fmt -check -recursive infrastructure apps
+      - terraform -chdir=infrastructure validate
+      - terraform -chdir=apps validate
+
+  policy:
+    desc: Fail if any Terraform resource exposes a public data-plane endpoint
+    cmds:
+      - ./scripts/policy-no-public-endpoints.sh
+
+  preview-sdk-pins:
+    desc: Fail if any preview Azure AI SDK is not exact-pinned
+    silent: true
+    cmds:
+      - |
+        set -e
+        BAD=$(grep -nHE 'PackageVersion Include="Azure\.AI\.[A-Za-z.]+" Version="[^"]*(\*|\[)' Directory.Packages.props || true)
+        if [ -n "$BAD" ]; then
+          echo "Preview Azure.AI.* SDKs must be exact-pinned."
+          echo "$BAD"
+          exit 1
+        fi
+        echo "All Azure.AI.* dependencies are exact-pinned."
+
+  ui:
+    desc: Lint and typecheck the scoreboard UI
+    dir: src/webui
+    cmds:
+      - npm ci
+      - npm run lint
+      - npx tsc --noEmit

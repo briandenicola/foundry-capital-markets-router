@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Fcmr.Router.Decisions</RootNamespace>
+    <AssemblyName>Fcmr.Router.Decisions</AssemblyName>
+  </PropertyGroup>
+
+  <!--
+    Deliberately dependency-free. This assembly is the coverage-gated core; adding I/O or an SDK
+    reference here makes it untestable and defeats the purpose of the split.
+  -->
+
+</Project>

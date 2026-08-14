@@ -1,0 +1,51 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+[Dd]ebug/
+[Rr]elease/
+TestResults/
+coverage/
+*.coverage
+*.trx
+*.cobertura.xml
+
+# Node
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+npm-debug.log*
+
+# Terraform
+.terraform/
+.terraform.tfstate.lock.info
+terraform.tfstate
+terraform.tfstate.*
+terraform.tfstate.d/
+*.tfvars
+!*.example.tfvars
+crash.log
+tfplan
+tfplan.json
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Editors and OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Generated synthetic data volumes (generators are committed; output is not)
+data/generated/
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/

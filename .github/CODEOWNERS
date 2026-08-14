@@ -1,0 +1,14 @@
+# Default owner for everything not otherwise matched.
+*                           @briandenicola
+
+# Governance surfaces require explicit review.
+/.specify/memory/           @briandenicola
+/.github/workflows/         @briandenicola
+/docs/adr/                  @briandenicola
+/SECURITY.md                @briandenicola
+
+# Infrastructure and policy gates.
+/infrastructure/            @briandenicola
+/apps/                      @briandenicola
+/scripts/policy-*.sh        @briandenicola
+/scripts/guard-*.sh         @briandenicola

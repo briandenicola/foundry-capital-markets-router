@@ -1,0 +1,56 @@
+version: '3'
+
+env:
+  APPS_DIR: apps
+
+vars:
+  ACR_LOGIN_SERVER:
+    sh: terraform -chdir=./infrastructure output -raw acr_login_server 2>/dev/null || true
+  TAG: '{{default "latest" .CLI_ARGS}}'
+  SERVICES: router-service research-service surveillance-service orderrouting-service
+
+tasks:
+  default:
+    desc: Show available app tasks
+    cmds:
+      - task --list
+
+  build:
+    desc: Build all service container images
+    cmds:
+      - for: { var: SERVICES }
+        cmd: docker build -t {{.ACR_LOGIN_SERVER}}/{{.ITEM}}:{{.TAG}} -f src/{{.ITEM}}/Dockerfile .
+
+  build-ui:
+    desc: Build the scoreboard UI image
+    cmds:
+      - docker build -t {{.ACR_LOGIN_SERVER}}/webui:{{.TAG}} -f src/webui/Dockerfile src/webui
+
+  push:
+    desc: Push images to the private container registry
+    cmds:
+      - az acr login --name $(terraform -chdir=./infrastructure output -raw acr_name)
+      - for: { var: SERVICES }
+        cmd: docker push {{.ACR_LOGIN_SERVER}}/{{.ITEM}}:{{.TAG}}
+      - docker push {{.ACR_LOGIN_SERVER}}/webui:{{.TAG}}
+
+  deploy:
+    desc: Build, push, and apply the workload stack
+    cmds:
+      - task: build
+      - task: build-ui
+      - task: push
+      - terraform -chdir=./{{.APPS_DIR}} apply -auto-approve -compact-warnings
+        -var "image_tag={{.TAG}}"
+
+  seed:
+    desc: Generate and load synthetic demo data (research corpus, e-comms, orders, alerts)
+    cmds:
+      - dotnet run --project src/tools/SyntheticData -- --seed 20260910 --all
+
+  logs:
+    desc: Tail logs for a container app. Usage - task app:logs -- router-service
+    cmds:
+      - az containerapp logs show --name {{.CLI_ARGS}}
+        --resource-group $(terraform -chdir=./infrastructure output -raw resource_group_name)
+        --follow
