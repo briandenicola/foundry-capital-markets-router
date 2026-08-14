@@ -1,6 +1,6 @@
 # Feature 002 — Governed AI Exchange
 
-- Status: Draft
+- Status: Accepted — **Slice A only** for the 9/10 build
 - Depends on: Feature 001 (router core)
 - Source: `docs/requirements.md`
 - Constitution: Principle IV (Applications Never Select Models) is the principle this feature exists to realise.
@@ -121,14 +121,52 @@ mechanism to express it. They can write a standard. They cannot enforce one.
 - Snapshot the execution plan for a fixed request under two policy sets; assert they differ only
   in vendor assignment.
 
+## Delivery slices
+
+Feature 001 already consumes the 22 days to 9/5. Feature 002 is therefore split, and only Slice A
+is in the 9/10 build.
+
+### Slice A — in the 9/10 build
+
+Policy engine, policy storage, hot-swap, and the policy screen. Delivers **JTBD-1, JTBD-2, JTBD-3,
+and JTBD-5**, which is everything Beat 5 needs. `PolicyGate` in `Fcmr.Router.Decisions` is already
+built and tested, so this slice is mostly storage, API surface, and UI.
+
+The demo claim Slice A supports in full: *disable a vendor in policy and an unchanged request from
+an unchanged application executes somewhere else.* Nothing about that claim requires decomposition.
+
+### Slice B — deferred, Phase 2 backlog
+
+Intent classification and task decomposition (**JTBD-4**). Deferred because it is the largest
+unknown in the feature and the least load-bearing for the narrative: a single-task request routed
+under policy proves governance just as well as a five-task plan, and does it in less stage time.
+
+Slice B is specified here rather than dropped, so the "what's next" conversation has substance
+behind it.
+
+## Resolved questions
+
+**Where policy sets live.** Cosmos container `policySets`, seeded at deploy time from a
+Terraform-managed JSON baseline, with the change feed providing the audit trail. Writes go through
+the policy API, never directly.
+
+This deliberately serves two audiences at once. The demo needs a sub-10-second hot-swap, which
+Cosmos gives. A bank needs review-gated change, which the Terraform baseline gives — the production
+path is Git, pipeline, then Cosmos, and the runtime write path exists for the demo and for
+break-glass. Say that out loud if asked; it is a better answer than pretending either alone is
+sufficient.
+
+**Whether intent classification uses a model.** Yes, but it is **not routed** — it uses a fixed
+cheap deployment declared as infrastructure. Routing the component that decides routing is circular,
+and the recursion would be the first thing an architect in the room noticed. Slice B only.
+
+**Scope for 9/10.** Slice A. Recorded in `docs/decisions-needed.md` item 3.
+
 ## Open questions
 
-1. Where do policy sets live — Cosmos, App Configuration, or a Terraform-managed file? Cosmos
-   gives the fastest hot-swap and an audit trail via change feed; Terraform gives review-gated
-   change. The demo wants the former; a bank would want the latter. Possibly both, with Cosmos as
-   the runtime cache.
-2. Does intent classification use a model, and if so, which one routes *it*? There is an obvious
-   recursion here. The pragmatic answer is a fixed cheap deployment outside the exchange, declared
-   explicitly as infrastructure rather than pretending it is routed.
-3. Is Feature 002 in scope for 9/10, or does the demo show the policy gate (already implemented in
-   `PolicyGate`) without full task decomposition? See `docs/decisions-needed.md` item 3.
+1. Whether a policy change should invalidate in-flight requests or only affect subsequent ones.
+   Current position: subsequent only, because cancelling work mid-flight is a worse behaviour to
+   demonstrate than finishing it under the policy that authorised it. Revisit if the audience is
+   more compliance than engineering.
+2. Whether policy sets are versioned or mutable. Slice A treats them as versioned-on-write via the
+   change feed, which is free. A real versioning UX is out of scope.

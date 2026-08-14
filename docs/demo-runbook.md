@@ -78,8 +78,11 @@ changes.
 Submit a research request. Note out loud that **the application never named a model** — it
 submitted a business request.
 
-Now open the policy set and **disable Anthropic**. Change nothing else. No redeploy, no code
-change, no prompt change. Resubmit the identical request.
+Now open the **policy screen** (`/policy`) and **disable Anthropic** — a toggle, in the product,
+as an approver. Not the Azure portal: governance is a first-class surface here or the claim is
+hollow. Change nothing else. No redeploy, no code change, no prompt change.
+
+Resubmit the identical request.
 
 Stop talking. Let the room watch execution replan around the remaining approved vendors, and let
 them read the exclusion reason: *Vendor Anthropic is not approved under policy set
@@ -98,6 +101,10 @@ that data.
 *This beat answers the lock-in objection with a mechanism rather than a roadmap. It is deliberately
 positioned after the two primary beats: it lands hardest once the audience already believes the
 routing is real. If you are running short, this is the beat to compress, not to cut.*
+
+**Expect the question "does it decompose one request across several models?"** The honest answer is
+that the exchange is built for it, the plan model is specified, and it is the next slice — see
+`specs/002-governed-exchange/` Slice B. Do not imply it is working.*
 
 ### Beat 6 — Human in the loop (5 min)
 

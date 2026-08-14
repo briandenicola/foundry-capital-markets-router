@@ -10,7 +10,7 @@ Nothing here blocks the scaffold. Each has a working default so the repository s
 |---|---|---|
 | 1 | Orchestration SDK | **Resolved** — Foundry hosted agents |
 | 2 | Which wow moment leads | **Resolved** — scoreboard and surveillance stay primary |
-| 3 | Routing signal breadth | Open |
+| 3 | Routing signal breadth | **Resolved** — Feature 002 Slice A in build, Slice B deferred |
 | 4 | Three lanes or research only | Open |
 
 ---
@@ -46,16 +46,20 @@ the demo never keeps.
 
 ---
 
-## 3. Routing signals: expand beyond cost and complexity — OPEN
+## 3. Routing signals: expand beyond cost and complexity — RESOLVED
 
-**The conflict.** Feature 001 routes on cost and task complexity, per discovery. `requirements.md`
-additionally requires intent, confidence target, and **data classification**.
+**Resolution: Feature 002 Slice A is in the 9/10 build; Slice B is deferred.**
 
-**Status:** partially resolved already. `PolicyGate` implements data classification and region
-restriction, since a governance demo without data classification is not a governance demo. Intent
-classification and confidence targets are specified in Feature 002 but not implemented.
+Data classification and region restriction are already implemented in `PolicyGate` and are being
+wired into the routing path (T-208…T-212). Intent classification and task decomposition move to a
+Phase 2 backlog (T-251…T-255).
 
-**Needs your call** only on whether Feature 002 is in scope for 9/10.
+**Rationale.** Feature 001 already consumes the 22 days to 9/5. Slice A delivers everything Beat 5
+needs — a policy change that visibly reroutes an unchanged request — and none of that claim depends
+on decomposition. A single-task request routed under policy proves governance just as well as a
+five-task plan, in less stage time.
+
+Slice B is specified rather than dropped, so the "what's next" conversation has substance behind it.
 
 ---
 

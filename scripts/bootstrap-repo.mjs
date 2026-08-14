@@ -2251,7 +2251,7 @@ No feature work. Rehearsal, fallback drills, and bug fixes only.
 ===== FILE: specs/002-governed-exchange/spec.md =====
 # Feature 002 — Governed AI Exchange
 
-- Status: Draft
+- Status: Accepted — **Slice A only** for the 9/10 build
 - Depends on: Feature 001 (router core)
 - Source: `docs/requirements.md`
 - Constitution: Principle IV (Applications Never Select Models) is the principle this feature exists to realise.
@@ -2372,17 +2372,419 @@ mechanism to express it. They can write a standard. They cannot enforce one.
 - Snapshot the execution plan for a fixed request under two policy sets; assert they differ only
   in vendor assignment.
 
+## Delivery slices
+
+Feature 001 already consumes the 22 days to 9/5. Feature 002 is therefore split, and only Slice A
+is in the 9/10 build.
+
+### Slice A — in the 9/10 build
+
+Policy engine, policy storage, hot-swap, and the policy screen. Delivers **JTBD-1, JTBD-2, JTBD-3,
+and JTBD-5**, which is everything Beat 5 needs. `PolicyGate` in `Fcmr.Router.Decisions` is already
+built and tested, so this slice is mostly storage, API surface, and UI.
+
+The demo claim Slice A supports in full: *disable a vendor in policy and an unchanged request from
+an unchanged application executes somewhere else.* Nothing about that claim requires decomposition.
+
+### Slice B — deferred, Phase 2 backlog
+
+Intent classification and task decomposition (**JTBD-4**). Deferred because it is the largest
+unknown in the feature and the least load-bearing for the narrative: a single-task request routed
+under policy proves governance just as well as a five-task plan, and does it in less stage time.
+
+Slice B is specified here rather than dropped, so the "what's next" conversation has substance
+behind it.
+
+## Resolved questions
+
+**Where policy sets live.** Cosmos container `policySets`, seeded at deploy time from a
+Terraform-managed JSON baseline, with the change feed providing the audit trail. Writes go through
+the policy API, never directly.
+
+This deliberately serves two audiences at once. The demo needs a sub-10-second hot-swap, which
+Cosmos gives. A bank needs review-gated change, which the Terraform baseline gives — the production
+path is Git, pipeline, then Cosmos, and the runtime write path exists for the demo and for
+break-glass. Say that out loud if asked; it is a better answer than pretending either alone is
+sufficient.
+
+**Whether intent classification uses a model.** Yes, but it is **not routed** — it uses a fixed
+cheap deployment declared as infrastructure. Routing the component that decides routing is circular,
+and the recursion would be the first thing an architect in the room noticed. Slice B only.
+
+**Scope for 9/10.** Slice A. Recorded in `docs/decisions-needed.md` item 3.
+
 ## Open questions
 
-1. Where do policy sets live — Cosmos, App Configuration, or a Terraform-managed file? Cosmos
-   gives the fastest hot-swap and an audit trail via change feed; Terraform gives review-gated
-   change. The demo wants the former; a bank would want the latter. Possibly both, with Cosmos as
-   the runtime cache.
-2. Does intent classification use a model, and if so, which one routes *it*? There is an obvious
-   recursion here. The pragmatic answer is a fixed cheap deployment outside the exchange, declared
-   explicitly as infrastructure rather than pretending it is routed.
-3. Is Feature 002 in scope for 9/10, or does the demo show the policy gate (already implemented in
-   `PolicyGate`) without full task decomposition? See `docs/decisions-needed.md` item 3.
+1. Whether a policy change should invalidate in-flight requests or only affect subsequent ones.
+   Current position: subsequent only, because cancelling work mid-flight is a worse behaviour to
+   demonstrate than finishing it under the policy that authorised it. Revisit if the audience is
+   more compliance than engineering.
+2. Whether policy sets are versioned or mutable. Slice A treats them as versioned-on-write via the
+   change feed, which is free. A real versioning UX is out of scope.
+
+===== FILE: specs/002-governed-exchange/data-model.md =====
+# Data Model — Feature 002
+
+Extends `specs/001-router-core/data-model.md`. Same source-of-truth rule: Cosmos is authoritative,
+Application Insights is derived and may be sampled.
+
+## Containers
+
+### policySets
+
+Partition key: `/businessUnit`. The governance object the demo mutates on stage.
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string | Policy set identifier, e.g. `CapitalMarkets-US` |
+| `businessUnit` | string | Partition key. Governance is scoped per business unit |
+| `displayName` | string | Shown in the policy screen |
+| `approvedVendors` | string[] | `AzureOpenAI`, `Anthropic`, `XAI`, `OpenWeight` |
+| `maxClassification` | map<string,string> | Vendor to maximum permitted classification |
+| `allowedRegions` | string[] | Empty means unrestricted |
+| `maxCostPerRequestUsd` | number | Policy ceiling, applied before any per-request ceiling |
+| `version` | number | Incremented on write |
+| `updatedBy` | string | Entra object id of the approver who changed it |
+| `updatedAt` | string | ISO 8601 |
+| `_ts` | number | Cosmos timestamp; drives the change feed |
+
+**Seeded from Terraform, written through the API.** The deploy-time baseline is a
+Terraform-managed JSON document; runtime writes exist for the demo and for break-glass. Nothing
+writes to this container directly.
+
+**Change feed is the audit trail.** Every write produces an `auditEvent` of kind
+`PolicySetChanged` carrying the before and after. A governance control whose own changes are
+unaudited is not a control.
+
+### routerDecisions — extended
+
+Feature 001 fields are unchanged. Slice A adds:
+
+| Field | Type | Notes |
+|---|---|---|
+| `policySetId` | string | Which policy set governed this decision |
+| `policySetVersion` | number | Pinned at decision time, so a later edit cannot rewrite history |
+| `dataClassification` | string | `Public`, `Internal`, `Confidential`, `Restricted` |
+| `selectedVendor` | string | Vendor of the selected model |
+| `policyExclusions` | object[] | `{ deployment, vendor, reason }` per excluded candidate |
+
+`policySetVersion` matters more than it looks. Without it, replaying an audit record after a policy
+edit would show a decision that appears to violate the policy in force — which is exactly the
+finding an auditor would escalate.
+
+`policyExclusions` is persisted, not merely computed for the response. The question "why was this
+model not used?" is asked long after the request completes.
+
+### auditEvents — extended
+
+New `kind` values: `PolicySetChanged`, `PolicyEvaluated`, `RequestRefusedByPolicy`.
+
+`RequestRefusedByPolicy` is a first-class outcome, not an error. A refusal is the system working.
+
+## Enumerations
+
+`DataClassification` is ordered, and the ordering is the comparison used by the gate:
+
+```text
+Public (0) < Internal (1) < Confidential (2) < Restricted (3)
+```
+
+A vendor's `maxClassification` is the highest it may process. `request > vendor maximum` excludes
+the vendor. Adding a level later means inserting into this ordering — do not renumber; append.
+
+## Slice B additions (deferred)
+
+Recorded for completeness; not built for 9/10.
+
+### executionPlans
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string | Plan identifier |
+| `correlationId` | string | Partition key |
+| `intent` | string | Classified intent of the business request |
+| `tasks` | object[] | `{ taskId, description, complexity, selectedVendor, selectedDeployment, status }` |
+| `status` | string | `Planned`, `Executing`, `Completed`, `PartiallyFailed` |
+
+`PartiallyFailed` exists because a task with no eligible model must fail that task explicitly
+rather than failing the whole request silently.
+
+===== FILE: specs/002-governed-exchange/contracts/policy-api.md =====
+# Contract — Policy API
+
+Base: internal Container Apps ingress only. There is no public FQDN.
+Auth: Entra ID. Reads require `Router.Read`; **writes require `Approver`.**
+
+Governance changes are an approver action. If the role that invokes models could also change which
+models are approved, the control would be circular.
+
+## GET /v1/policy-sets
+
+Returns policy sets visible to the caller's business unit.
+
+### Response 200
+
+```json
+{
+  "policySets": [
+    {
+      "id": "CapitalMarkets-US",
+      "businessUnit": "CapitalMarkets",
+      "displayName": "Capital Markets — US",
+      "approvedVendors": ["AzureOpenAI", "Anthropic", "XAI", "OpenWeight"],
+      "maxClassification": {
+        "AzureOpenAI": "Confidential",
+        "Anthropic": "Internal",
+        "XAI": "Internal",
+        "OpenWeight": "Restricted"
+      },
+      "allowedRegions": ["eastus2"],
+      "maxCostPerRequestUsd": 0.5,
+      "version": 3,
+      "updatedBy": "8f1c...",
+      "updatedAt": "2026-09-10T14:02:11Z"
+    }
+  ]
+}
+```
+
+## GET /v1/policy-sets/{id}
+
+Single policy set. 404 if not visible to the caller's business unit.
+
+## PATCH /v1/policy-sets/{id}
+
+The stage action. Partial update; only supplied fields change.
+
+### Request
+
+```json
+{
+  "approvedVendors": ["AzureOpenAI", "XAI", "OpenWeight"],
+  "expectedVersion": 3
+}
+```
+
+`expectedVersion` is required. A mismatch returns **409 Conflict**. Two approvers editing
+concurrently must not silently overwrite one another — least of all in a governance control.
+
+### Response 200
+
+```json
+{
+  "id": "CapitalMarkets-US",
+  "version": 4,
+  "changed": {
+    "approvedVendors": {
+      "from": ["AzureOpenAI", "Anthropic", "XAI", "OpenWeight"],
+      "to": ["AzureOpenAI", "XAI", "OpenWeight"]
+    }
+  },
+  "effectiveFrom": "2026-09-10T14:05:03Z"
+}
+```
+
+`changed` is a before-and-after diff, returned so the UI can show precisely what the approver did
+without a second fetch. It is the same payload written to the audit event.
+
+### Errors
+
+| Status | When |
+|---|---|
+| 400 | Unknown vendor, unknown classification, or `maxClassification` naming a vendor not in `approvedVendors` |
+| 403 | Caller lacks `Approver` |
+| 409 | `expectedVersion` mismatch |
+| 422 | The change would leave no vendor able to serve `Restricted`, when the set is marked as permitting Restricted data |
+
+422 is deliberate. Silently creating a policy set that refuses every restricted request is a
+configuration accident that would surface as a demo failure.
+
+## GET /v1/policy-sets/{id}/history
+
+Change feed projection. Returns the last N versions with `updatedBy`, `updatedAt`, and the diff.
+
+Backs the audit claim: the control's own changes are auditable.
+
+## Freshness contract
+
+A successful `PATCH` is visible to routing **within 5 seconds**, matching the AC-5 scoreboard
+budget. Beat 5 depends on this: the presenter changes policy and resubmits immediately.
+
+In-flight requests are unaffected — they complete under the policy version pinned at decision time.
+
+===== FILE: specs/002-governed-exchange/contracts/router-api-policy-extension.md =====
+# Contract — Router API, policy extension
+
+Extends `specs/001-router-core/contracts/router-api.md`. Slice A.
+
+## POST /v1/route — additional request fields
+
+```json
+{
+  "dataClassification": "Internal",
+  "policySetId": "CapitalMarkets-US"
+}
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `dataClassification` | Yes | Defaulting this would be unsafe. An omitted classification is a **400**, not an assumption of `Public` |
+| `policySetId` | No | Defaults to the policy set for the caller's business unit |
+
+**There is still no model, vendor, or deployment field, and there will not be one.** Principle IV
+is enforced by the contract's shape: a field that exists is a field that eventually gets used.
+
+`dataClassification` is a property of the request, not a routing preference. The caller states what
+the data *is*; the exchange decides what that permits.
+
+## POST /v1/route — additional response fields
+
+```json
+{
+  "decision": {
+    "policySetId": "CapitalMarkets-US",
+    "policySetVersion": 4,
+    "selectedVendor": "AzureOpenAI",
+    "policyExclusions": [
+      {
+        "deployment": "claude-sonnet-4-5",
+        "vendor": "Anthropic",
+        "reason": "Vendor Anthropic is not approved under policy set 'CapitalMarkets-US'."
+      }
+    ]
+  }
+}
+```
+
+`reason` is prose fit to read aloud to a governance audience. Not an error code, not "policy". The
+presenter will read one of these on stage in Beat 5.
+
+## New outcome — RefusedByPolicy
+
+`outcome` gains a value alongside `Routed`, `Downgraded`, and `Denied`:
+
+```json
+{
+  "decision": {
+    "outcome": "RefusedByPolicy",
+    "selectedDeployment": null,
+    "policyExclusions": [ "...every candidate, each with a reason..." ]
+  }
+}
+```
+
+Returned as **200**, not an error status. A refusal is a correct, governed outcome and callers must
+handle it as a normal response. Modelling it as a 4xx would encourage retry-on-error logic, and the
+one thing that must never happen is a retry that finds an unapproved model.
+
+`Denied` (cost ceiling, Feature 001) and `RefusedByPolicy` (governance) stay distinct. Collapsing
+them would lose the distinction between "too expensive" and "not permitted", which are different
+conversations with different people.
+
+## Evaluation order
+
+Policy first, then cost and complexity:
+
+```text
+catalog -> PolicyGate.Evaluate() -> eligible -> TierSelector.Select() -> decision
+```
+
+Reversing this would let a cost optimisation reach a model governance has not approved. The order
+is asserted by test, not left to code reading.
+
+===== FILE: specs/002-governed-exchange/tasks.md =====
+# Incremental Tasks — Feature 002
+
+Numbered `T-2xx` to stay distinct from Feature 001's `T-0xx`.
+
+**Slice A only for the 9/10 build.** Slice B is the Phase 2 backlog.
+
+## Slice A — Policy engine (runs alongside Feature 001, day 7 to 17)
+
+Sequenced to land before the UI work in Feature 001's Phase 5 needs it.
+
+### Storage and seed
+
+- **T-201** `policySets` Cosmos container, partitioned on `/businessUnit`, with the change-feed
+  subscription wired to `auditEvents`.
+- **T-202** Terraform-managed baseline policy set, seeded at deploy time. `CapitalMarkets-US` with
+  all four vendors approved and the classification limits from the data model.
+- **T-203** Policy set repository with optimistic concurrency on `version`. A write with a stale
+  `expectedVersion` fails; it does not merge.
+
+### API
+
+- **T-204** `GET /v1/policy-sets` and `GET /v1/policy-sets/{id}`, `Router.Read`.
+- **T-205** `PATCH /v1/policy-sets/{id}`, **`Approver` only**, returning the before-and-after diff.
+  Includes the 400, 409, and 422 validation cases from the contract.
+- **T-206** `GET /v1/policy-sets/{id}/history` from the change feed.
+- **T-207** `PolicySetChanged` audit event carrying before and after. The control's own changes
+  must be auditable or the control is not one.
+
+### Router integration
+
+- **T-208** Extend `POST /v1/route` with `dataClassification` (**required — omission is a 400, not
+  a default**) and optional `policySetId`.
+- **T-209** Wire `PolicyGate` into the routing path **ahead of** `TierSelector`. Assert the order
+  by test; do not leave it to code reading.
+- **T-210** Add `RefusedByPolicy` as a 200 outcome distinct from `Denied`. Callers must not treat a
+  refusal as a retryable error.
+- **T-211** Persist `policySetId`, `policySetVersion`, `dataClassification`, `selectedVendor`, and
+  `policyExclusions` on the decision record. Version is pinned at decision time so a later edit
+  cannot rewrite history.
+- **T-212** Policy cache with a **5-second maximum staleness**, matching the contract. Beat 5 fails
+  if this is slower; a per-request read would also work and is the safer fallback.
+
+### Multi-vendor execution
+
+- **T-213** Vendor-aware model invocation in the router: Azure OpenAI, Anthropic, and xAI
+  serverless deployments behind one internal interface.
+- **T-214** Open-weight invocation against the managed compute endpoint, gated on
+  `enable_managed_compute`. Degrades to "Restricted unavailable" rather than failing the service
+  when the toggle is off.
+
+### UI
+
+- **T-215** Policy sets screen (Feature 001 **T-042**) wired to this API: per-vendor approval
+  toggles, classification limits, current version, and last-changed-by.
+- **T-216** Surface `policyExclusions` in the decision detail view (T-029b), each with its reason
+  rendered as prose.
+- **T-217** Data classification control on the request console (T-028e), including the Restricted
+  path.
+
+### Proof
+
+- **T-218** Property test: for any policy set and any request, the selected vendor is in
+  `approvedVendors` and its `maxClassification` is at least the request classification. This is the
+  invariant the feature rests on — assert it exhaustively, not by example.
+- **T-219** Removing each vendor in turn from the four-vendor catalog yields four valid plans; an
+  empty eligible set yields `RefusedByPolicy` naming every exclusion.
+- **T-220** **Rehearse Beat 5 end to end and time it.** Policy change to observable behaviour
+  change under 10 seconds, with byte-identical request payloads across both runs, shown in the UI.
+
+## Slice B — Intent and decomposition (Phase 2 backlog, not in the 9/10 build)
+
+- **T-251** Intent classification against a fixed cheap deployment declared as infrastructure and
+  explicitly **not routed**. Routing the component that decides routing is circular.
+- **T-252** Task decomposition producing an `executionPlans` record.
+- **T-253** Per-task routing, so one request may execute across several vendors.
+- **T-254** Execution plan visible in the UI before completion — the audience sees reasoning, not
+  just a result.
+- **T-255** `PartiallyFailed` handling: a task with no eligible model fails that task explicitly
+  rather than failing the request silently.
+
+## Dependencies on Feature 001
+
+| This feature | Needs |
+|---|---|
+| T-208…T-212 | T-015 (`POST /v1/route`) |
+| T-211 | T-014 (decision persistence) |
+| T-215 | T-028b (role guards), T-042 (policy screen shell) |
+| T-216 | T-029b (decision detail) |
+| T-207 | T-019 (append-only audit events) |
+
+Slice A cannot start before T-015 and T-019 land, which places it at Feature 001 day 7 at the
+earliest. That is the real constraint on this slice, not its own size.
 ===== FILE: docs/README.md =====
 # Documentation
 
@@ -3119,8 +3521,11 @@ changes.
 Submit a research request. Note out loud that **the application never named a model** — it
 submitted a business request.
 
-Now open the policy set and **disable Anthropic**. Change nothing else. No redeploy, no code
-change, no prompt change. Resubmit the identical request.
+Now open the **policy screen** (`/policy`) and **disable Anthropic** — a toggle, in the product,
+as an approver. Not the Azure portal: governance is a first-class surface here or the claim is
+hollow. Change nothing else. No redeploy, no code change, no prompt change.
+
+Resubmit the identical request.
 
 Stop talking. Let the room watch execution replan around the remaining approved vendors, and let
 them read the exclusion reason: *Vendor Anthropic is not approved under policy set
@@ -3139,6 +3544,10 @@ that data.
 *This beat answers the lock-in objection with a mechanism rather than a roadmap. It is deliberately
 positioned after the two primary beats: it lands hardest once the audience already believes the
 routing is real. If you are running short, this is the beat to compress, not to cut.*
+
+**Expect the question "does it decompose one request across several models?"** The honest answer is
+that the exchange is built for it, the plan model is specified, and it is the next slice — see
+`specs/002-governed-exchange/` Slice B. Do not imply it is working.*
 
 ### Beat 6 — Human in the loop (5 min)
 
@@ -3347,7 +3756,7 @@ Nothing here blocks the scaffold. Each has a working default so the repository s
 |---|---|---|
 | 1 | Orchestration SDK | **Resolved** — Foundry hosted agents |
 | 2 | Which wow moment leads | **Resolved** — scoreboard and surveillance stay primary |
-| 3 | Routing signal breadth | Open |
+| 3 | Routing signal breadth | **Resolved** — Feature 002 Slice A in build, Slice B deferred |
 | 4 | Three lanes or research only | Open |
 
 ---
@@ -3383,16 +3792,20 @@ the demo never keeps.
 
 ---
 
-## 3. Routing signals: expand beyond cost and complexity — OPEN
+## 3. Routing signals: expand beyond cost and complexity — RESOLVED
 
-**The conflict.** Feature 001 routes on cost and task complexity, per discovery. `requirements.md`
-additionally requires intent, confidence target, and **data classification**.
+**Resolution: Feature 002 Slice A is in the 9/10 build; Slice B is deferred.**
 
-**Status:** partially resolved already. `PolicyGate` implements data classification and region
-restriction, since a governance demo without data classification is not a governance demo. Intent
-classification and confidence targets are specified in Feature 002 but not implemented.
+Data classification and region restriction are already implemented in `PolicyGate` and are being
+wired into the routing path (T-208…T-212). Intent classification and task decomposition move to a
+Phase 2 backlog (T-251…T-255).
 
-**Needs your call** only on whether Feature 002 is in scope for 9/10.
+**Rationale.** Feature 001 already consumes the 22 days to 9/5. Slice A delivers everything Beat 5
+needs — a policy change that visibly reroutes an unchanged request — and none of that claim depends
+on decomposition. A single-task request routed under policy proves governance just as well as a
+five-task plan, in less stage time.
+
+Slice B is specified rather than dropped, so the "what's next" conversation has substance behind it.
 
 ---
 
