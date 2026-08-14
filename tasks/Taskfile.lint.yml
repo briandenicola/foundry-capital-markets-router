@@ -7,6 +7,7 @@ tasks:
       - task: format
       - task: terraform
       - task: policy
+      - task: no-development-environment
       - task: no-simulated-reasoning
       - task: preview-sdk-pins
       - task: api-types
@@ -29,6 +30,11 @@ tasks:
     desc: Fail if any Terraform resource exposes a public data-plane endpoint
     cmds:
       - ./scripts/policy-no-public-endpoints.sh
+
+  no-development-environment:
+    desc: Fail if any deployment artefact runs router-service in the Development environment
+    cmds:
+      - ./scripts/policy-no-development-environment.sh
 
   no-simulated-reasoning:
     desc: Fail if any path could render recorded output as live agent reasoning

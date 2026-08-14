@@ -41,7 +41,7 @@ Feature 001 fields are unchanged. Slice A adds:
 | `policySetVersion` | number | Pinned at decision time, so a later edit cannot rewrite history |
 | `dataClassification` | string | `Public`, `Internal`, `Confidential`, `Restricted` |
 | `selectedVendor` | string | Vendor of the selected model |
-| `policyExclusions` | object[] | `{ deployment, vendor, reason }` per excluded candidate |
+| `policyExclusions` | object[] | `{ deployment, vendor, kind, reason }` per excluded candidate |
 
 `policySetVersion` matters more than it looks. Without it, replaying an audit record after a policy
 edit would show a decision that appears to violate the policy in force — which is exactly the
@@ -49,6 +49,14 @@ finding an auditor would escalate.
 
 `policyExclusions` is persisted, not merely computed for the response. The question "why was this
 model not used?" is asked long after the request completes.
+
+`kind` is `VendorNotApproved`, `ClassificationExceeded`, `RegionNotPermitted`, or
+`PolicyCostCeiling` — and it is stored rather than left inferable from the `reason` prose because
+prose does not aggregate. A refusal whose exclusions are *all* `PolicyCostCeiling` is a cost
+outcome wearing a governance label; without the field, a candidate dropped on price is
+indistinguishable from one dropped on principle, and the `Denied` versus `RefusedByPolicy`
+distinction this feature exists to protect reappears as a problem one level down. See
+`contracts/router-api-policy-extension.md`.
 
 ### auditEvents — extended
 

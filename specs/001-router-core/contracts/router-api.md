@@ -19,6 +19,8 @@ at the network layer.
   "payload": { "question": "..." },
   "costCeilingUsd": 0.25,
   "latencyBudgetMs": 8000,
+  "dataClassification": "Internal",
+  "executionRegion": "eastus2",
   "complexityHints": {
     "inputTokenEstimate": 12000,
     "requiresMultiStep": true,
@@ -27,6 +29,21 @@ at the network layer.
   }
 }
 ```
+
+`lane`, `taskKind`, `costCeilingUsd`, `dataClassification`, and `complexityHints` are required.
+`correlationId`, `payload`, `latencyBudgetMs`, and `executionRegion` are optional.
+
+`dataClassification` is one of `Public`, `Internal`, `Confidential`, `Restricted`. It is **never
+defaulted** — omission is a 400. Defaulting an omitted classification is how Restricted data
+reaches a vendor governance never cleared for it. See ADR-009.
+
+There is no model, vendor, deployment, or tier field, and there will not be one. `payload` is
+opaque to the router and is screened for keys that would amount to the caller choosing its own
+model; such a request is refused with a 400. Principle IV.
+
+If `correlationId` is supplied in both the body and the `X-Correlation-Id` header, the two must
+agree. A conflict is a 400 rather than a precedence rule, because splitting one interaction across
+two ids breaks the single-query audit reconstruction in AC-8.
 
 ### Response 200
 
@@ -68,9 +85,31 @@ at the network layer.
     "latencyMs": 4310,
     "baselineCostUsd": 0.180,
     "qualitySignal": { "method": "AttributionCoverage", "score": 0.94 }
+  },
+  "inference": {
+    "state": "Invoked",
+    "detail": "..."
   }
 }
 ```
+
+Every 200 carries an `inference` object stating whether a model actually ran. `result` is null and
+the model-derived fields of `metrics` are null whenever none did. A null states that a number was
+not measured; it is never a placeholder, and a plausible-looking figure is never emitted in place
+of one. See ADR-007 and ADR-009.
+
+`state` is one of:
+
+| State | Meaning |
+|---|---|
+| `NotInvoked` | The decision was made and recorded; no model call was attempted. |
+| `NotReached` | Governance policy ended the request before a model call could be attempted. |
+
+`RefusedByPolicy` is a **200** outcome, not an error. Governance refusing a request is a
+successful, governed answer, and carrying it on an error status would invite retry-on-error — the
+one retry that must never succeed is the one that finds a model governance has not approved. It is
+deliberately distinct from `Denied`, which is a 402: "too expensive" and "not permitted" are
+different conversations with different people.
 
 ### Response 402 — cost ceiling denial
 
@@ -87,12 +126,30 @@ A denial is never silently absorbed. It is always surfaced to the UI.
 
 ### Response 403
 
-The caller lacks the Router.Invoke app role.
+The caller lacks the Router.Invoke app role. A missing token and a token without the role both
+answer 403: the contract names one status for "not permitted to invoke", and distinguishing the two
+for an unauthenticated caller helps nobody except someone probing for the difference.
 
 ### Response 503
 
 No tier is available. The response includes the tiers attempted. The router never falls back to an
 unrouted direct call.
+
+Also returned when the governing policy set cannot be resolved. Routing without a policy set means
+routing ungoverned, which is worse than not routing at all.
+
+### Status code by outcome
+
+| `decision.outcome` | Status | Error code |
+|---|---|---|
+| `Routed` | 200 | — |
+| `Downgraded` | 200 | — |
+| `RefusedByPolicy` | 200 | — |
+| `Denied`, nothing affordable | 402 | `CostCeilingExceeded` |
+| `Denied`, no permitted model available | 503 | `NoTierAvailable` |
+
+Every response on every path, including 400 and 403, carries `correlationId` in the body and in the
+`X-Correlation-Id` response header.
 
 ## GET /v1/decisions/{correlationId}
 

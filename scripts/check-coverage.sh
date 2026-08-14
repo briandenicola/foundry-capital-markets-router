@@ -34,6 +34,14 @@ for report in reports:
             continue
         for cls in pkg.iter('class'):
             filename = cls.get('filename') or ''
+            # Different test projects report the same source file under different roots: one
+            # emits 'TierSelector.cs', another 'Fcmr.Router.Decisions/TierSelector.cs'. Keyed
+            # raw, the same line counts twice — once covered and once not — and the union
+            # understates coverage by exactly the duplicated set. The leading assembly directory
+            # is stripped so the two spellings collapse onto one key.
+            prefix = assembly.lower() + '/'
+            while filename.lower().startswith(prefix):
+                filename = filename[len(prefix):]
             for line in cls.iter('line'):
                 key = (filename, line.get('number'))
                 seen[key] = max(seen.get(key, 0), int(line.get('hits', '0')))

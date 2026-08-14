@@ -1,75 +1,113 @@
+using System.Text.Json.Serialization;
 using Fcmr.Router.Decisions;
+using Fcmr.RouterService.Configuration;
+using Fcmr.RouterService.Contracts;
+using Fcmr.RouterService.Correlation;
+using Fcmr.RouterService.Health;
+using Fcmr.RouterService.Persistence;
+using Fcmr.RouterService.Routing;
+using Fcmr.RouterService.Security;
+using Fcmr.RouterService.Telemetry;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddProblemDetails();
 
-// T-011: Application Insights wiring, correlation-ID middleware.
-// T-014: Cosmos decision persistence and the change-feed scoreboard fallback.
-// T-015: full POST /v1/route implementation against contracts/router-api.md.
+// Enums cross the wire as names. The UI's generated types are string unions, and an audit record
+// holding "2" where it should hold "Denied" is one enum reorder away from being wrong.
+builder.Services.ConfigureHttpJsonOptions(o =>
+    o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
+
+builder.Services.AddOptions<RouterOptions>()
+    .Bind(builder.Configuration.GetSection(RouterOptions.SectionName));
+
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddCorrelationId();
+builder.Services.AddRouterTelemetry(builder.Configuration);
+builder.Services.AddRouterAuthorization(builder.Configuration, builder.Environment);
+
+builder.Services.AddSingleton<IModelCatalog, ConfiguredModelCatalog>();
+
+// T-014 replaces this registration with the Cosmos adapter. Nothing above the port changes when
+// it does, which is the entire point of the port existing before the adapter.
+builder.Services.AddSingleton<IRoutingDecisionStore, InMemoryRoutingDecisionStore>();
+
+builder.Services.AddSingleton<IPolicySetRepository>(sp =>
+    new InMemoryPolicySetRepository(
+        [DefaultPolicySet.From(sp.GetRequiredService<IOptions<RouterOptions>>().Value.Policy)],
+        sp.GetRequiredService<TimeProvider>()));
+
+builder.Services.AddScoped<RouteRequestHandler>();
+
+builder.Services.AddHealthChecks()
+    .AddCheck<DecisionStoreHealthCheck>("decision-store", tags: ["ready"]);
 
 var app = builder.Build();
 
-app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
+// Before everything, so a request that fails authentication, model binding, or routing still
+// carries an id the audit trail can be searched by.
+app.UseCorrelationId();
 
-// Placeholder. The real implementation invokes Foundry through APIM after the decision is made
-// and persisted. No other service may reach a model deployment; see Principle V.
-app.MapPost("/v1/route", (RouteRequest request) =>
+if (RouterAuthorization.IsEnforced(app.Configuration, app.Environment))
 {
-    var score = ComplexityScorer.Score(new ComplexityHints
+    app.UseAuthentication();
+    app.UseAuthorization();
+}
+
+// Liveness answers "is this process running", and nothing more. It must not consult a dependency:
+// a liveness probe that fails on a downstream outage causes Container Apps to restart a healthy
+// replica, turning a recoverable dependency blip into a rolling outage.
+app.MapHealthChecks("/healthz/live", new()
+{
+    Predicate = _ => false,
+}).AllowAnonymous();
+
+// Readiness answers "should traffic be sent here", and therefore does consult dependencies.
+app.MapHealthChecks("/healthz/ready", new()
+{
+    Predicate = check => check.Tags.Contains("ready"),
+}).AllowAnonymous();
+
+// Retained because Container Apps probes and existing tooling already point at it. It is the
+// liveness signal; readiness lives at /healthz/ready and the two are not interchangeable.
+app.MapGet("/healthz", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
+
+app.MapPost("/v1/route", async (RouteRequest request, RouteRequestHandler handler, CancellationToken ct) =>
     {
-        InputTokenEstimate = request.ComplexityHints?.InputTokenEstimate ?? 0,
-        RequiresMultiStep = request.ComplexityHints?.RequiresMultiStep ?? false,
-        RequiresRetrieval = request.ComplexityHints?.RequiresRetrieval ?? false,
-        RequiresToolCalls = request.ComplexityHints?.RequiresToolCalls ?? false,
-    });
-
-    var pricing = TierPricingCatalog.FromEnvironment();
-    var decision = TierSelector.Select(score, request.CostCeilingUsd, pricing);
-
-    return decision.Outcome == RoutingOutcome.Denied
-        ? Results.Json(new { request.CorrelationId, error = "CostCeilingExceeded", decision }, statusCode: 402)
-        : Results.Ok(new { request.CorrelationId, decision });
-});
+        var result = await handler.HandleAsync(request, ct);
+        return Results.Json(result.Body, statusCode: result.StatusCode);
+    })
+    .AddEndpointFilter<RequireAppRoleFilter>()
+    .WithName("Route");
 
 app.Run();
 
-internal sealed record RouteRequest(
-    string CorrelationId,
-    string Lane,
-    string TaskKind,
-    decimal CostCeilingUsd,
-    int LatencyBudgetMs,
-    ComplexityHintsDto? ComplexityHints);
-
-internal sealed record ComplexityHintsDto(
-    int InputTokenEstimate,
-    bool RequiresMultiStep,
-    bool RequiresRetrieval,
-    bool RequiresToolCalls);
-
-internal static class TierPricingCatalog
+/// <summary>
+/// The governance baseline the router starts from when no policy set has been written yet.
+///
+/// Configuration supplies the identifiers only. The permissions themselves are deliberately the
+/// most restrictive shape that can still serve the demo — one approved vendor, Confidential as the
+/// ceiling, Restricted not permitted — because a baseline that is permissive by default is a
+/// baseline nobody notices is permissive.
+/// </summary>
+internal static class DefaultPolicySet
 {
-    // Placeholder pricing. T-013 replaces this with gateway-reported rates.
-    public static List<TierPricing> FromEnvironment() =>
-    [
-        new()
+    public static PolicySet From(RouterPolicyOptions options) => new()
+    {
+        Id = options.SetId,
+        BusinessUnit = options.BusinessUnit,
+        DisplayName = options.SetId,
+        ApprovedVendors = new HashSet<ModelVendor> { ModelVendor.AzureOpenAI },
+        MaxClassification = new Dictionary<ModelVendor, DataClassification>
         {
-            Tier = ModelTier.Economy,
-            Deployment = Environment.GetEnvironmentVariable("MODEL_TIER_ECONOMY") ?? "gpt-5.4-mini",
-            CostPerRequestUsd = 0.004m,
+            [ModelVendor.AzureOpenAI] = DataClassification.Confidential,
         },
-        new()
-        {
-            Tier = ModelTier.Standard,
-            Deployment = Environment.GetEnvironmentVariable("MODEL_TIER_STANDARD") ?? "gpt-5.4",
-            CostPerRequestUsd = 0.031m,
-        },
-        new()
-        {
-            Tier = ModelTier.Premium,
-            Deployment = Environment.GetEnvironmentVariable("MODEL_TIER_PREMIUM") ?? "gpt-5.6-sol",
-            CostPerRequestUsd = 0.180m,
-        },
-    ];
+        MaxCostPerRequestUsd = 1.0m,
+        PermitsRestrictedData = false,
+    };
 }
+
+/// <summary>Present so a test host can reference the composition root.</summary>
+public partial class Program;

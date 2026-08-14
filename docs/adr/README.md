@@ -25,3 +25,6 @@ reasonable at the time.
 | 004 | Application Insights scoreboard with Cosmos fallback | Accepted |
 | 005 | Hosted Foundry agents over prompt agents | Accepted |
 | 006 | Multi-vendor model catalog, incl. open-weight on managed compute | Accepted |
+| 007 | No fallback may simulate agent reasoning | Accepted |
+| 008 | The approval aggregate authorises; it does not execute | Accepted |
+| 009 | Route responses state whether a model ran; dataClassification is required | Accepted |

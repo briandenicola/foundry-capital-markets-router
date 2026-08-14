@@ -6,6 +6,7 @@ obj/
 [Dd]ebug/
 [Rr]elease/
 TestResults/
+.nuget-packages/
 coverage/
 *.coverage
 *.trx

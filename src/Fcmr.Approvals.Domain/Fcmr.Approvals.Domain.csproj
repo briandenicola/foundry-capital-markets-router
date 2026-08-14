@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Fcmr.Approvals.Domain</RootNamespace>
+    <AssemblyName>Fcmr.Approvals.Domain</AssemblyName>
+  </PropertyGroup>
+
+  <!--
+    Deliberately dependency-free, for the same reason as Fcmr.Router.Decisions: this assembly holds
+    the most-scrutinised control in the system, and a control that cannot be exhaustively tested in
+    isolation is a control we can only assert. No ASP.NET, no Cosmos, no Azure SDK, no ambient
+    clock — time arrives as a TimeProvider so expiry is a testable fact rather than a hope.
+  -->
+
+</Project>

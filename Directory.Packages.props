@@ -6,7 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup Label="Azure">
-    <PackageVersion Include="Azure.Identity" Version="1.13.2" />
+    <PackageVersion Include="Azure.Identity" Version="1.17.2" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.AspNetCore" Version="1.3.0" />
     <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.46.1" />
     <PackageVersion Include="Azure.Search.Documents" Version="11.6.0" />
@@ -30,12 +30,20 @@
   </ItemGroup>
 
   <ItemGroup Label="Web">
-    <PackageVersion Include="Microsoft.Identity.Web" Version="3.5.0" />
+    <!--
+      3.5.0 carries GHSA-rpq8-q44m-2rpg, and NuGetAudit is configured to fail the build on it.
+      Held at or above 4.14.2, which is past the advisory. This is the security gate working; do
+      not lower it to silence a restore error.
+    -->
+    <PackageVersion Include="Microsoft.Identity.Web" Version="4.14.2" />
     <PackageVersion Include="Swashbuckle.AspNetCore" Version="7.2.0" />
   </ItemGroup>
 
   <ItemGroup Label="Testing">
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <!-- Pinned to the installed ASP.NET Core 10.0.0 runtime so the in-process contract host
+         matches what the service runs on. -->
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.0" />
     <PackageVersion Include="xunit" Version="2.9.2" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="2.8.2" />
     <PackageVersion Include="FluentAssertions" Version="7.0.0" />

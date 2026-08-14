@@ -480,6 +480,7 @@ obj/
 [Dd]ebug/
 [Rr]elease/
 TestResults/
+.nuget-packages/
 coverage/
 *.coverage
 *.trx
@@ -656,7 +657,7 @@ APPROVAL_EXPIRY_MINUTES=30
   </PropertyGroup>
 
   <ItemGroup Label="Azure">
-    <PackageVersion Include="Azure.Identity" Version="1.13.2" />
+    <PackageVersion Include="Azure.Identity" Version="1.17.2" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.AspNetCore" Version="1.3.0" />
     <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.46.1" />
     <PackageVersion Include="Azure.Search.Documents" Version="11.6.0" />
@@ -680,12 +681,20 @@ APPROVAL_EXPIRY_MINUTES=30
   </ItemGroup>
 
   <ItemGroup Label="Web">
-    <PackageVersion Include="Microsoft.Identity.Web" Version="3.5.0" />
+    <!--
+      3.5.0 carries GHSA-rpq8-q44m-2rpg, and NuGetAudit is configured to fail the build on it.
+      Held at or above 4.14.2, which is past the advisory. This is the security gate working; do
+      not lower it to silence a restore error.
+    -->
+    <PackageVersion Include="Microsoft.Identity.Web" Version="4.14.2" />
     <PackageVersion Include="Swashbuckle.AspNetCore" Version="7.2.0" />
   </ItemGroup>
 
   <ItemGroup Label="Testing">
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <!-- Pinned to the installed ASP.NET Core 10.0.0 runtime so the in-process contract host
+         matches what the service runs on. -->
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.0" />
     <PackageVersion Include="xunit" Version="2.9.2" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="2.8.2" />
     <PackageVersion Include="FluentAssertions" Version="7.0.0" />
@@ -866,17 +875,25 @@ version: '3'
 tasks:
   default:
     desc: Run the test suites that exist today
-    # contract, integration, and e2e are deliberately not in the default run: their projects do
-    # not exist until T-015, T-035, and a deployed environment. A default task that always fails
-    # is a default task people stop running.
+    # integration and e2e stay out of the default run: they need a deployed environment, and a
+    # default task that always fails is a default task people stop running.
+    #
+    # contract is now in, because tests/Fcmr.Contract.Tests exists (T-015). It is red while the
+    # endpoints it specifies are still being written, and that is the process working. Removing
+    # it from the default run to restore a green board would delete the only signal that says how
+    # much of the published contract is actually served.
     cmds:
       - task: unit
+      - task: contract
       - task: ui
 
   unit:
     desc: Run unit tests with coverage collection
+    # Solution-wide, minus the contract suite, which measures a different thing: conformance to a
+    # published contract rather than the behaviour of a unit. Listing unit projects by hand
+    # instead would silently stop running the next one somebody adds.
     cmds:
-      - dotnet test --collect:"XPlat Code Coverage" --results-directory ./TestResults
+      - dotnet test --filter "FullyQualifiedName!~Fcmr.Contract.Tests" --collect:"XPlat Code Coverage" --results-directory ./TestResults
 
   coverage:
     desc: Enforce the 70% coverage threshold on router decision logic
@@ -917,6 +934,7 @@ tasks:
       - task: format
       - task: terraform
       - task: policy
+      - task: no-development-environment
       - task: no-simulated-reasoning
       - task: preview-sdk-pins
       - task: api-types
@@ -939,6 +957,11 @@ tasks:
     desc: Fail if any Terraform resource exposes a public data-plane endpoint
     cmds:
       - ./scripts/policy-no-public-endpoints.sh
+
+  no-development-environment:
+    desc: Fail if any deployment artefact runs router-service in the Development environment
+    cmds:
+      - ./scripts/policy-no-development-environment.sh
 
   no-simulated-reasoning:
     desc: Fail if any path could render recorded output as live agent reasoning
@@ -1054,13 +1077,17 @@ updates:
 ===== FILE: Fcmr.slnx =====
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Fcmr.Approvals.Domain/Fcmr.Approvals.Domain.csproj" />
     <Project Path="src/Fcmr.Demo.Data/Fcmr.Demo.Data.csproj" />
     <Project Path="src/Fcmr.Router.Decisions/Fcmr.Router.Decisions.csproj" />
     <Project Path="src/router-service/router-service.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Fcmr.Approvals.Domain.Tests/Fcmr.Approvals.Domain.Tests.csproj" />
+    <Project Path="tests/Fcmr.Contract.Tests/Fcmr.Contract.Tests.csproj" />
     <Project Path="tests/Fcmr.Demo.Data.Tests/Fcmr.Demo.Data.Tests.csproj" />
     <Project Path="tests/Fcmr.Router.Decisions.Tests/Fcmr.Router.Decisions.Tests.csproj" />
+    <Project Path="tests/Fcmr.RouterService.Tests/Fcmr.RouterService.Tests.csproj" />
   </Folder>
 </Solution>
 
@@ -1179,6 +1206,21 @@ jobs:
       - name: Enforce private-by-construction
         run: ./scripts/policy-no-public-endpoints.sh
 
+  no-development-environment:
+    name: no development environment in deployment
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # router-service disables Router.Invoke enforcement when the host reports the Development
+      # environment. That affordance was justified by analogy to enable_private_networking, and
+      # the analogy only holds if it is enforced the way that variable is enforced -- by a job
+      # that fails the build -- rather than asserted in a code comment.
+      #
+      # Paired with a startup guard in Security/RouterAuthorization.cs, which refuses to start
+      # unauthenticated on a managed platform. This job gives the PR-time signal; the guard closes
+      # the portal and CLI paths that never open a pull request. Neither alone is sufficient.
+      - run: ./scripts/policy-no-development-environment.sh
+
   terraform:
     name: terraform lint and scan
     runs-on: ubuntu-latest
@@ -1215,10 +1257,46 @@ jobs:
         run: dotnet format --verify-no-changes --no-restore
       - name: build
         run: dotnet build --no-restore --configuration Release
+      # The contract suite is excluded here and runs in its own non-required job below. It is red
+      # by design while the surfaces it specifies are still being written, and a red step here
+      # would abort the job before the coverage threshold below ever executes -- leaving the gate
+      # absent rather than loosened, which is worse, because the job name still claims it ran.
+      #
+      # The filter matches tasks/Taskfile.test.yml:unit deliberately. Two spellings of "which
+      # tests gate a merge" is how they drift.
       - name: test with coverage
-        run: dotnet test --no-build --configuration Release --collect:"XPlat Code Coverage" --results-directory ./TestResults
+        run: >-
+          dotnet test --no-build --configuration Release
+          --filter "FullyQualifiedName!~Fcmr.Contract.Tests"
+          --collect:"XPlat Code Coverage" --results-directory ./TestResults
       - name: enforce coverage threshold
         run: ./scripts/check-coverage.sh 70 Fcmr.Router.Decisions
+
+  contract-conformance:
+    name: contract conformance (reporting only)
+    runs-on: ubuntu-latest
+    # NOT a required check, and this is scheduled to change rather than left open-ended.
+    #
+    # This job measures how much of the published contract in specs/001-router-core/contracts/ is
+    # actually served. It is expected to fail while T-018's approval host does not exist, and that
+    # failure is the signal, not noise -- deleting the suite to get a green board would delete the
+    # only thing that reports the gap.
+    #
+    # EXPIRY: this job becomes a required check when T-018 lands the approval API host. Recorded
+    # against T-018 in specs/001-router-core/tasks.md. A non-blocking job with no date on which it
+    # blocks is a skip with more YAML.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: restore
+        run: dotnet restore
+      - name: build
+        run: dotnet build --no-restore --configuration Release
+      - name: contract tests
+        run: dotnet test tests/Fcmr.Contract.Tests --no-build --configuration Release
 
   ui:
     name: ui lint typecheck test
@@ -1918,53 +1996,180 @@ Mitigation for the Application Insights risk, validated in T-014 before 9/5:
 
 ## Containers
 
+Feature 002 extends this model: it adds the `policySets` container and further fields to
+`routerDecisions` and `auditEvents`. Those additions are reflected inline below, because a reader
+of this file alone must not conclude that routing is ungoverned or that a governance refusal is
+stored as a cost denial. See `specs/002-governed-exchange/data-model.md` for `policySets` itself.
+
 ### routerDecisions
 
 Partition key: /correlationId
 
+The stored document is **not flat**. An envelope carries the request identity and timing, and the
+routing decision is nested beneath it as a `decision` object — the same shape
+`POST /v1/route` returns and `GET /v1/decisions/{correlationId}` replays. Ground truth is
+`src/router-service/Persistence/RoutingDecisionStore.cs` and
+`src/Fcmr.Router.Decisions/RoutingDecision.cs`.
+
+**Envelope**
+
 | Field | Type | Notes |
 |---|---|---|
 | id | string | GUID |
-| correlationId | string | Spans the whole request lifecycle |
+| correlationId | string | Partition key. Spans the whole request lifecycle |
 | lane | enum | Research, Surveillance, OrderRouting |
 | taskKind | string | For example synthesize, triage, proposeRoute |
-| complexityScore | number | 0.0 to 1.0 |
-| complexityInputs | object | Signals and weights that produced the score |
-| costCeilingUsd | number | Enforced ceiling for this request |
-| candidateTiers | array | Tiers considered, with projected cost |
-| selectedTier | enum | Economy, Standard, Premium |
-| selectedDeployment | string | Foundry deployment name |
-| outcome | enum | Routed, Downgraded, Denied |
-| rationale | string | Human-readable, shown in the UI |
-| promptTokens | number | From the gateway |
-| completionTokens | number | From the gateway |
-| actualCostUsd | number | Computed after the call |
-| latencyMs | number | End to end |
-| qualitySignal | object | method and score |
-| baselineCostUsd | number | Cost had Premium been used; powers the savings delta |
+| complexityInputs | object | The signals that produced the score: inputTokenEstimate, requiresMultiStep, requiresRetrieval, requiresToolCalls. Kept so a decision can be re-derived, not merely re-read |
+| decision | object | The routing decision. See below |
+| latencyMs | number, nullable | End to end. Null until measured |
 | createdAt | string | ISO-8601 UTC |
+
+**decision**
+
+| Field | Type | Notes |
+|---|---|---|
+| complexityScore | number | 0.0 to 1.0 |
+| costCeilingUsd | number | Enforced ceiling for this request |
+| outcome | enum | **Routed, Downgraded, Denied, RefusedByPolicy.** See Outcome semantics below |
+| selectedTier | enum, nullable | Economy, Standard, Premium. Null on any non-routed outcome |
+| selectedDeployment | string, nullable | Foundry deployment name. Null on any non-routed outcome |
+| selectedVendor | enum, nullable | AzureOpenAI, Anthropic, XAI, OpenWeight. Null on any non-routed outcome |
+| candidateTiers | array | Every tier considered: tier, deployment, projectedCostUsd, vendor, selected, rejectedReason |
+| rationale | string | Human-readable, shown in the UI. Must name the deciding factor |
+| policySetId | string, nullable | Which policy set governed this decision |
+| policySetVersion | number, nullable | Pinned at decision time, so a later policy edit cannot rewrite history |
+| dataClassification | enum, nullable | Public, Internal, Confidential, Restricted. Declared by the caller, never inferred and never defaulted |
+| policyExclusions | array | Every candidate governance removed, each with a kind and a reason. See below |
+
+**policyExclusions[]**
+
+| Field | Type | Notes |
+|---|---|---|
+| deployment | string | The candidate that was excluded |
+| vendor | enum | Its vendor |
+| kind | enum | VendorNotApproved, ClassificationExceeded, RegionNotPermitted, PolicyCostCeiling |
+| reason | string | Prose fit to read aloud to a governance audience. Never an error code, never "policy" |
+
+`kind` is what keeps a candidate dropped on **price** (`PolicyCostCeiling`) distinguishable from
+one dropped on **principle** (the other three) once every exclusion is reduced to prose. Without
+it, a request refused purely on cost is indistinguishable in the record from one refused on
+governance grounds — the same collapse `RefusedByPolicy` exists to prevent, one level down.
+`specs/002-governed-exchange/data-model.md` and `contracts/router-api-policy-extension.md` both
+still describe an exclusion as `{ deployment, vendor, reason }`; the code has carried `kind` since
+`PolicyGate` was written. Recorded here as a documentation gap, not a design question.
+
+`policySetVersion` matters more than it looks. Without it, replaying an audit record after a policy
+edit would show a decision that appears to violate the policy in force, which is exactly the
+finding an auditor escalates.
+
+**Fields that depend on a model call.** `promptTokens`, `completionTokens`, `actualCostUsd`,
+`baselineCostUsd`, and `qualitySignal` are measured only when a model actually runs, and are
+carried on the response's `metrics` object. They are **null until measured, never zero and never
+estimated**: a plausible-looking token count is indistinguishable from a real one, and the
+scoreboard's only job is to be believed. Every 200 also carries an `inference` object stating
+whether a model ran at all. See ADR-007 and `contracts/router-api.md`.
+
+**Known gap.** `executionRegion` is accepted on the request and evaluated by the policy gate, but
+is not persisted as its own field. It survives only inside the prose of a `RegionNotPermitted`
+exclusion, so "which region was this decision evaluated for?" is not answerable by query on a
+routed request. Raised for T-014 rather than silently papered over here.
+
+### Outcome semantics — Denied and RefusedByPolicy are not the same event
+
+A reader of this document must not leave it thinking a governance refusal is stored as `Denied`.
+The two outcomes answer different questions, are owned by different people, and produce different
+conversations:
+
+| Outcome | Meaning | Status | Whose decision | The conversation it starts |
+|---|---|---|---|---|
+| Routed | Executed at the tier complexity indicated | 200 | The router | None |
+| Downgraded | Executed at a cheaper tier because the ceiling required it | 200 | The router | "Did quality hold?" — the scoreboard answers it |
+| **Denied** | **Too expensive.** Nothing affordable within the cost ceiling | 402 `CostCeilingExceeded`, or 503 `NoTierAvailable` when no permitted tier is available at all | Whoever owns the budget | "Raise the ceiling, or accept a cheaper tier" |
+| **RefusedByPolicy** | **Not permitted.** Governance left no eligible model | **200** | Whoever owns the policy set | "Approve a vendor, or raise the classification limit" — never a budget conversation |
+
+`RefusedByPolicy` is a **successful, governed outcome carried on a 200**, never an error status.
+Modelling a refusal as a failure invites retry-on-error logic, and the one retry that must never
+succeed is the one that finds a model governance has not approved.
+
+Collapsing these two into one value — or documenting only `Denied`, as this file previously did —
+erases the distinction the entire demonstration rests on: that the exchange refuses work on
+governance grounds, visibly, and says so in language a compliance officer can act on. Every
+`RefusedByPolicy` record carries a fully populated `policyExclusions` array naming each vendor and
+why, because "refused by policy" is not an answer this audience accepts.
 
 ### approvals
 
 Partition key: /correlationId
 
+Ground truth is `src/Fcmr.Approvals.Domain/`. The aggregate has no public constructor: records are
+created by `Approval.Propose`, changed only by `ApprovalStateMachine`, and read back from this
+container by `Approval.Rehydrate`, which refuses documents that contradict themselves.
+
 | Field | Type | Notes |
 |---|---|---|
 | id | string | GUID |
-| correlationId | string | |
-| lane | enum | |
-| proposedAction | object | Lane-specific action payload |
-| evidencePacket | object | Inputs, retrieved sources, routing decision, proposal |
-| evidencePacketHash | string | SHA-256; detects tampering |
+| correlationId | string | Partition key |
+| lane | enum | Research, Surveillance, OrderRouting |
+| proposedAction | object | kind, summary, and lane-specific fields. A **projection** of evidencePacket.proposedAction, which is authoritative — the hash covers the packet, so a divergent copy here is tamper evidence, not a second opinion |
+| evidencePacket | object | Everything presented to the approver. See below |
+| evidencePacketHash | string | SHA-256, lowercase hex, over the **canonical form** of the packet (`fcmr-evidence-canonical-v1`), pinned at proposal time |
 | state | enum | PendingApproval, Approved, Rejected, Expired |
-| proposedByObjectId | string | Entra object ID of the originating identity |
-| decidedByObjectId | string | Null until decided; must differ from the proposer |
-| decisionReason | string | Required on rejection |
+| proposedByObjectId | string | Entra object ID of the originating identity. Never null |
+| decidedByObjectId | string | Null until decided. **Always null on Expired** |
+| decisionReason | string | Required on rejection, optional on approval, always null on expiry |
 | expiresAt | string | ISO-8601 UTC |
-| createdAt | string | |
-| decidedAt | string | |
+| createdAt | string | ISO-8601 UTC |
+| decidedAt | string | Set when the state left PendingApproval — including on expiry, where it records when the expiry was observed, not a decision |
 
-Legal transitions: PendingApproval to Approved, Rejected, or Expired. Terminal states are final.
+**evidencePacket**
+
+| Field | Type | Notes |
+|---|---|---|
+| correlationId | string | Inside the hash, so a packet cannot be moved between interactions |
+| lane | enum | |
+| inputs | map<string,string> | The request as received |
+| retrievedSources | array | documentId, chunkId, excerpt, score — the text actually shown to the approver |
+| routingDecision | object | outcome, complexityScore, costCeilingUsd, selectedTier, selectedDeployment, selectedVendor, policySetId, policySetVersion, rationale. Flattened to primitives so the packet stays readable years later without the type that wrote it |
+| proposedAction | object | kind, summary, fields |
+| unattributableClaims | string[] | Claims that could not be attributed, carried so the approver sees what was **withheld**. Principle III |
+
+The hash is computed over a canonical form derived from the typed packet, never over serialised
+bytes. It is therefore stable across JSON round-trips, property reordering, and pretty-printing,
+and it moves on any material change. Citation order is not material and does not move it; adding,
+removing, or editing a citation does. `EvidencePacketHasher.Canonicalize` is public so an auditor
+can reproduce the hash independently rather than taking the system's word for it.
+
+**Legal transitions.** PendingApproval to Approved, Rejected, or Expired. Terminal states are
+final. Expiry is legal only at or after `expiresAt`; an expiry job cannot expire a proposal early.
+**There is no transition from Expired to Approved** — not a guarded one, not a configurable one.
+Expiry is the recorded absence of a decision, and an absence is never upgraded into approval.
+
+Guards on a decision, evaluated in this order, per `contracts/approval-api.md`:
+
+| Guard | Refusal | Status |
+|---|---|---|
+| The proposal is not already in a terminal state | InvalidTransition | 409 |
+| The decision names a deciding identity | ApproverIdentityRequired | 400 |
+| `expiresAt` has not passed | Expired | 410 |
+| `decidedByObjectId` differs from `proposedByObjectId` | SegregationOfDuties | 409 |
+| A rejection carries a reason | ReasonRequired | 400 |
+| The stored packet still hashes to `evidencePacketHash` | EvidencePacketMismatch | 409 |
+
+A decision may additionally acknowledge the hash the approver was shown; when supplied it is
+verified and a mismatch is refused with EvidencePacketMismatch. The decision request in
+`contracts/approval-api.md` does not yet carry that field, so the domain treats it as optional and
+never defaults it — defaulting it to the stored hash would fabricate the acknowledgement. T-018
+publishes it. See `docs/adr/008-approval-domain-boundaries.md`.
+
+Segregation of duties is enforced in the domain model, not at the API edge, and is re-checked
+before execution — the record crosses persistence in between, and the premise of the hash is that
+records are not assumed to survive round-trips unaltered. Comparison is case-insensitive after
+trimming, so an object ID that differs only in casing is the same identity.
+
+**Execution is not a state of this container.** An approval authorises; it never acts. Execution
+is recorded on the lane's own record and in `auditEvents`, correlated by `correlationId`, and
+`ExecutionAuthorization` carries `evidencePacketHash` onto that record so the evidence approved and
+the evidence executed can be compared. See `docs/adr/008-approval-domain-boundaries.md`.
 
 ### surveillanceAlerts
 
@@ -2015,6 +2220,11 @@ Partition key: /correlationId
 | state | enum | Proposed, Halted, Approved, SimulatedExecuted |
 | simulated | boolean | Always true; the UI must render the label |
 
+Execution state lives here, on the lane record, not on the approval — an approval authorises and
+is final at the moment it is recorded, while execution has its own outcomes. `SimulatedExecuted`
+carries the `evidencePacketHash` of the approval it acted under, so the evidence approved and the
+evidence executed can be compared. See `docs/adr/008-approval-domain-boundaries.md`.
+
 ### auditEvents
 
 Partition key: /correlationId. Append-only. No update or delete permission is granted to any
@@ -2025,10 +2235,46 @@ service identity.
 | id | string | |
 | correlationId | string | |
 | sequence | number | Monotonic within the correlation |
-| eventType | enum | AgentAction, ModelCall, RoutingDecision, Retrieval, ApprovalRequested, ApprovalDecided, PolicyDenial, InjectionDetected |
-| actorObjectId | string | Human or service identity |
+| eventType | enum | See the table below |
+| actorObjectId | string | Human or service identity. **Null on ApprovalExpired**, because expiry is the absence of a decision and naming an identity would attribute a record to someone who had nothing to do with it |
 | payload | object | Event-specific |
 | occurredAt | string | |
+
+**eventType**
+
+| Value | Emitted by | Notes |
+|---|---|---|
+| AgentAction | Lanes | |
+| ModelCall | router-service | |
+| RoutingDecision | router-service | |
+| Retrieval | Lanes | |
+| ApprovalRequested | Approval domain | A proposal was raised and does not execute until approved |
+| ApprovalDecided | Approval domain | Carries the approver, the decision, and `evidencePacketHash` |
+| ApprovalExpired | Approval domain | No decision was recorded. Carries no actor and no reason |
+| ApprovalRefused | Approval domain | A refused attempt — self-approval, late decision, tampered evidence. Written because a blocked attempt is evidence in its own right |
+| ExecutionAuthorized | Approval domain | Authorisation issued against an approved proposal. Not execution itself |
+| InjectionDetected | Lanes | |
+| PolicySetChanged | Policy API (002) | Carries before and after. A governance control whose own changes are unaudited is not a control |
+| PolicyEvaluated | router-service (002) | |
+| RequestRefusedByPolicy | router-service (002) | A first-class outcome, not an error. A refusal is the system working |
+
+Every approval decision writes its record **before** the API returns, per
+`contracts/approval-api.md` invariant 3. The domain returns the audit event alongside the
+transition result rather than emitting it as a side effect, so a handler cannot return a decision
+it forgot to record.
+
+**Two open points, recorded rather than decided here:**
+
+1. **`PolicyDenial` has been removed from this list and is not replaced by a rename.** It was
+   ambiguous in exactly the way this document must not be: read plainly it means "policy denied
+   the request", but `Denied` in `routerDecisions` means the **cost ceiling** stopped the request,
+   while a governance refusal is `RefusedByPolicy`. Feature 002 introduces `RequestRefusedByPolicy`
+   for the governance case. If a distinct audit kind is still wanted for a cost denial it should be
+   named for cost, not for policy. **T-019 owns the call.**
+2. **This document names the field `eventType`; `specs/002-governed-exchange/data-model.md` calls
+   the same field `kind`.** No code implements the container yet, so nothing settles it. T-019
+   should pick one and correct the other document rather than shipping both names.
+
 
 ## Quality Signal
 
@@ -2065,6 +2311,8 @@ at the network layer.
   "payload": { "question": "..." },
   "costCeilingUsd": 0.25,
   "latencyBudgetMs": 8000,
+  "dataClassification": "Internal",
+  "executionRegion": "eastus2",
   "complexityHints": {
     "inputTokenEstimate": 12000,
     "requiresMultiStep": true,
@@ -2073,6 +2321,21 @@ at the network layer.
   }
 }
 ```
+
+`lane`, `taskKind`, `costCeilingUsd`, `dataClassification`, and `complexityHints` are required.
+`correlationId`, `payload`, `latencyBudgetMs`, and `executionRegion` are optional.
+
+`dataClassification` is one of `Public`, `Internal`, `Confidential`, `Restricted`. It is **never
+defaulted** — omission is a 400. Defaulting an omitted classification is how Restricted data
+reaches a vendor governance never cleared for it. See ADR-009.
+
+There is no model, vendor, deployment, or tier field, and there will not be one. `payload` is
+opaque to the router and is screened for keys that would amount to the caller choosing its own
+model; such a request is refused with a 400. Principle IV.
+
+If `correlationId` is supplied in both the body and the `X-Correlation-Id` header, the two must
+agree. A conflict is a 400 rather than a precedence rule, because splitting one interaction across
+two ids breaks the single-query audit reconstruction in AC-8.
 
 ### Response 200
 
@@ -2114,9 +2377,31 @@ at the network layer.
     "latencyMs": 4310,
     "baselineCostUsd": 0.180,
     "qualitySignal": { "method": "AttributionCoverage", "score": 0.94 }
+  },
+  "inference": {
+    "state": "Invoked",
+    "detail": "..."
   }
 }
 ```
+
+Every 200 carries an `inference` object stating whether a model actually ran. `result` is null and
+the model-derived fields of `metrics` are null whenever none did. A null states that a number was
+not measured; it is never a placeholder, and a plausible-looking figure is never emitted in place
+of one. See ADR-007 and ADR-009.
+
+`state` is one of:
+
+| State | Meaning |
+|---|---|
+| `NotInvoked` | The decision was made and recorded; no model call was attempted. |
+| `NotReached` | Governance policy ended the request before a model call could be attempted. |
+
+`RefusedByPolicy` is a **200** outcome, not an error. Governance refusing a request is a
+successful, governed answer, and carrying it on an error status would invite retry-on-error — the
+one retry that must never succeed is the one that finds a model governance has not approved. It is
+deliberately distinct from `Denied`, which is a 402: "too expensive" and "not permitted" are
+different conversations with different people.
 
 ### Response 402 — cost ceiling denial
 
@@ -2133,12 +2418,30 @@ A denial is never silently absorbed. It is always surfaced to the UI.
 
 ### Response 403
 
-The caller lacks the Router.Invoke app role.
+The caller lacks the Router.Invoke app role. A missing token and a token without the role both
+answer 403: the contract names one status for "not permitted to invoke", and distinguishing the two
+for an unauthenticated caller helps nobody except someone probing for the difference.
 
 ### Response 503
 
 No tier is available. The response includes the tiers attempted. The router never falls back to an
 unrouted direct call.
+
+Also returned when the governing policy set cannot be resolved. Routing without a policy set means
+routing ungoverned, which is worse than not routing at all.
+
+### Status code by outcome
+
+| `decision.outcome` | Status | Error code |
+|---|---|---|
+| `Routed` | 200 | — |
+| `Downgraded` | 200 | — |
+| `RefusedByPolicy` | 200 | — |
+| `Denied`, nothing affordable | 402 | `CostCeilingExceeded` |
+| `Denied`, no permitted model available | 503 | `NoTierAvailable` |
+
+Every response on every path, including 400 and 403, carries `correlationId` in the body and in the
+`X-Correlation-Id` response header.
 
 ## GET /v1/decisions/{correlationId}
 
@@ -2228,8 +2531,12 @@ Last updated 2026-08-14.
 
 ## Phase 2 — Router core (day 4 to 7)
 
-- **T-011** router-service skeleton, health endpoint, correlation-ID middleware, Application
-  Insights wiring.
+- [x] **T-011** router-service skeleton, health endpoint, correlation-ID middleware, Application
+  Insights wiring. *(Done. Liveness at `/healthz/live` and readiness at `/healthz/ready` are
+  deliberately separate — a readiness check that reports healthy while the decision store is
+  unreachable hides the failure ADR-007 says must be surfaced. Telemetry is config-driven and
+  managed-identity authenticated, with sampling disabled per ADR-004, and the host builds and runs
+  its tests with no Azure resource in reach.)*
 - [x] **T-012** Complexity scoring: pure, deterministic, exhaustively unit-tested. This is the
   coverage-gated assembly. *(Done — `Fcmr.Router.Decisions` at 93.6% line coverage.)*
 - [x] **T-013** Tier selection and cost ceiling enforcement, including the downgrade-versus-deny
@@ -2237,16 +2544,28 @@ Last updated 2026-08-14.
   candidate list marked every same-tier model as selected, which would have mis-attributed
   scoreboard cost the moment Feature 002 put four vendors in one tier; and within-tier selection
   took the first match rather than the cheapest.)*
-- **T-014** Decision persistence to Cosmos plus telemetry. **Validate the Application Insights
+- **T-014** Decision persistence to Cosmos plus telemetry. *(Port is defined and in use:
+  `IRoutingDecisionStore`, currently backed by `InMemoryRoutingDecisionStore`. The Cosmos adapter
+  is a registration change.)* **Validate the Application Insights
   latency and sampling assumption here against the AC-5 five-second budget, and build the Cosmos
   change-feed fallback behind configuration regardless.**
-- **T-015** POST /v1/route implemented against contracts/router-api.md, with contract tests.
+- [x] **T-015** POST /v1/route implemented against contracts/router-api.md, with contract tests.
+  *(Done — HTTP-to-`RoutingPlanner.Plan()` translation only. The previous stub called
+  `TierSelector` directly and so bypassed `PolicyGate`; that is fixed. Two contract gaps closed in
+  ADR-009: `dataClassification` is required rather than defaulted, and the response states whether
+  a model actually ran instead of leaving it to be inferred from a null.)*
 - **T-016** GET /v1/scoreboard aggregation, including the Premium baseline delta.
 
 ## Phase 3 — Approval gate (day 7 to 9)
 
 - **T-017** Approval domain model, state machine, and evidence-packet hashing.
 - **T-018** Approval API per contract, segregation-of-duties enforcement, and the expiry job.
+  **Carries a CI expiry:** the `contract-conformance` job in `.github/workflows/quality-gate.yml`
+  is non-required *only* until this task lands. `Fcmr.Contract.Tests` currently fails 13 approval
+  cases because no approval API host exists, which is the job reporting a real gap rather than
+  noise. **On completion of T-018, remove `continue-on-error: true` from that job and add it to
+  the required checks.** A non-blocking job with no recorded date on which it becomes blocking is
+  a skip with more YAML. The 28 router contract cases already pass and must not regress.
 - **T-019** Append-only auditEvents, with a service identity holding no update or delete rights.
 - **T-020** One-query correlation reconstruction endpoint satisfying AC-8.
 
@@ -2579,7 +2898,7 @@ Feature 001 fields are unchanged. Slice A adds:
 | `policySetVersion` | number | Pinned at decision time, so a later edit cannot rewrite history |
 | `dataClassification` | string | `Public`, `Internal`, `Confidential`, `Restricted` |
 | `selectedVendor` | string | Vendor of the selected model |
-| `policyExclusions` | object[] | `{ deployment, vendor, reason }` per excluded candidate |
+| `policyExclusions` | object[] | `{ deployment, vendor, kind, reason }` per excluded candidate |
 
 `policySetVersion` matters more than it looks. Without it, replaying an audit record after a policy
 edit would show a decision that appears to violate the policy in force — which is exactly the
@@ -2587,6 +2906,14 @@ finding an auditor would escalate.
 
 `policyExclusions` is persisted, not merely computed for the response. The question "why was this
 model not used?" is asked long after the request completes.
+
+`kind` is `VendorNotApproved`, `ClassificationExceeded`, `RegionNotPermitted`, or
+`PolicyCostCeiling` — and it is stored rather than left inferable from the `reason` prose because
+prose does not aggregate. A refusal whose exclusions are *all* `PolicyCostCeiling` is a cost
+outcome wearing a governance label; without the field, a candidate dropped on price is
+indistinguishable from one dropped on principle, and the `Denied` versus `RefusedByPolicy`
+distinction this feature exists to protect reappears as a problem one level down. See
+`contracts/router-api-policy-extension.md`.
 
 ### auditEvents — extended
 
@@ -2762,6 +3089,7 @@ the data *is*; the exchange decides what that permits.
       {
         "deployment": "claude-sonnet-4-5",
         "vendor": "Anthropic",
+        "kind": "VendorNotApproved",
         "reason": "Vendor Anthropic is not approved under policy set 'CapitalMarkets-US'."
       }
     ]
@@ -2789,6 +3117,26 @@ presenter will read one of these on stage in Beat 5.
 Returned as **200**, not an error status. A refusal is a correct, governed outcome and callers must
 handle it as a normal response. Modelling it as a 4xx would encourage retry-on-error logic, and the
 one thing that must never happen is a retry that finds an unapproved model.
+
+### `kind` — why the exclusion happened
+
+Every exclusion carries a `kind` alongside its prose `reason`. The prose is for the audience; the
+`kind` is for the query, and only one of those survives being aggregated.
+
+| `kind` | The candidate was dropped because |
+|---|---|
+| `VendorNotApproved` | The vendor is not on the policy set's approved list |
+| `ClassificationExceeded` | The data classification exceeds what the vendor may receive |
+| `RegionNotPermitted` | The execution region is not permitted by the policy set |
+| `PolicyCostCeiling` | It exceeded the policy set's own `maxCostPerRequestUsd` |
+
+`PolicyCostCeiling` is the one that matters most, and it is why this field exists rather than being
+inferable from the reason string. A refusal in which *every* exclusion is `PolicyCostCeiling` is a
+**cost** outcome wearing a governance label: nobody was willing to pay for the request, and no
+governance rule was actually offended. `RoutingPlanner` says so explicitly in the rationale of such
+a refusal. Without `kind`, the collapse this whole document exists to prevent simply reappears one
+level down — a candidate dropped on **price** becomes indistinguishable from one dropped on
+**principle**, and the scoreboard cannot tell a budget conversation from a compliance one.
 
 `Denied` (cost ceiling, Feature 001) and `RefusedByPolicy` (governance) stay distinct. Collapsing
 them would lose the distinction between "too expensive" and "not permitted", which are different
@@ -3088,6 +3436,9 @@ reasonable at the time.
 | 004 | Application Insights scoreboard with Cosmos fallback | Accepted |
 | 005 | Hosted Foundry agents over prompt agents | Accepted |
 | 006 | Multi-vendor model catalog, incl. open-weight on managed compute | Accepted |
+| 007 | No fallback may simulate agent reasoning | Accepted |
+| 008 | The approval aggregate authorises; it does not execute | Accepted |
+| 009 | Route responses state whether a model ran; dataClassification is required | Accepted |
 
 ===== FILE: docs/adr/0000-adr-template.md =====
 # NNN. [Title as a decision, not a topic]
@@ -4460,6 +4811,14 @@ for report in reports:
             continue
         for cls in pkg.iter('class'):
             filename = cls.get('filename') or ''
+            # Different test projects report the same source file under different roots: one
+            # emits 'TierSelector.cs', another 'Fcmr.Router.Decisions/TierSelector.cs'. Keyed
+            # raw, the same line counts twice — once covered and once not — and the union
+            # understates coverage by exactly the duplicated set. The leading assembly directory
+            # is stripped so the two spellings collapse onto one key.
+            prefix = assembly.lower() + '/'
+            while filename.lower().startswith(prefix):
+                filename = filename[len(prefix):]
             for line in cls.iter('line'):
                 key = (filename, line.get('number'))
                 seen[key] = max(seen.get(key, 0), int(line.get('hits', '0')))
@@ -6360,7 +6719,7 @@ public class TierSelectorTests
   <ItemGroup>
     <PackageReference Include="Azure.Identity" />
     <PackageReference Include="Azure.Monitor.OpenTelemetry.AspNetCore" />
-    <PackageReference Include="Microsoft.Azure.Cosmos" />
+    <PackageReference Include="Microsoft.Identity.Web" />
     <PackageReference Include="Azure.AI.Projects" />
   </ItemGroup>
 
@@ -6368,84 +6727,126 @@ public class TierSelectorTests
     <ProjectReference Include="../Fcmr.Router.Decisions/Fcmr.Router.Decisions.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Fcmr.RouterService.Tests" />
+  </ItemGroup>
+
 </Project>
 
 ===== FILE: src/router-service/Program.cs =====
+using System.Text.Json.Serialization;
 using Fcmr.Router.Decisions;
+using Fcmr.RouterService.Configuration;
+using Fcmr.RouterService.Contracts;
+using Fcmr.RouterService.Correlation;
+using Fcmr.RouterService.Health;
+using Fcmr.RouterService.Persistence;
+using Fcmr.RouterService.Routing;
+using Fcmr.RouterService.Security;
+using Fcmr.RouterService.Telemetry;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddProblemDetails();
 
-// T-011: Application Insights wiring, correlation-ID middleware.
-// T-014: Cosmos decision persistence and the change-feed scoreboard fallback.
-// T-015: full POST /v1/route implementation against contracts/router-api.md.
+// Enums cross the wire as names. The UI's generated types are string unions, and an audit record
+// holding "2" where it should hold "Denied" is one enum reorder away from being wrong.
+builder.Services.ConfigureHttpJsonOptions(o =>
+    o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
+
+builder.Services.AddOptions<RouterOptions>()
+    .Bind(builder.Configuration.GetSection(RouterOptions.SectionName));
+
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddCorrelationId();
+builder.Services.AddRouterTelemetry(builder.Configuration);
+builder.Services.AddRouterAuthorization(builder.Configuration, builder.Environment);
+
+builder.Services.AddSingleton<IModelCatalog, ConfiguredModelCatalog>();
+
+// T-014 replaces this registration with the Cosmos adapter. Nothing above the port changes when
+// it does, which is the entire point of the port existing before the adapter.
+builder.Services.AddSingleton<IRoutingDecisionStore, InMemoryRoutingDecisionStore>();
+
+builder.Services.AddSingleton<IPolicySetRepository>(sp =>
+    new InMemoryPolicySetRepository(
+        [DefaultPolicySet.From(sp.GetRequiredService<IOptions<RouterOptions>>().Value.Policy)],
+        sp.GetRequiredService<TimeProvider>()));
+
+builder.Services.AddScoped<RouteRequestHandler>();
+
+builder.Services.AddHealthChecks()
+    .AddCheck<DecisionStoreHealthCheck>("decision-store", tags: ["ready"]);
 
 var app = builder.Build();
 
-app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
+// Before everything, so a request that fails authentication, model binding, or routing still
+// carries an id the audit trail can be searched by.
+app.UseCorrelationId();
 
-// Placeholder. The real implementation invokes Foundry through APIM after the decision is made
-// and persisted. No other service may reach a model deployment; see Principle V.
-app.MapPost("/v1/route", (RouteRequest request) =>
+if (RouterAuthorization.IsEnforced(app.Configuration, app.Environment))
 {
-    var score = ComplexityScorer.Score(new ComplexityHints
+    app.UseAuthentication();
+    app.UseAuthorization();
+}
+
+// Liveness answers "is this process running", and nothing more. It must not consult a dependency:
+// a liveness probe that fails on a downstream outage causes Container Apps to restart a healthy
+// replica, turning a recoverable dependency blip into a rolling outage.
+app.MapHealthChecks("/healthz/live", new()
+{
+    Predicate = _ => false,
+}).AllowAnonymous();
+
+// Readiness answers "should traffic be sent here", and therefore does consult dependencies.
+app.MapHealthChecks("/healthz/ready", new()
+{
+    Predicate = check => check.Tags.Contains("ready"),
+}).AllowAnonymous();
+
+// Retained because Container Apps probes and existing tooling already point at it. It is the
+// liveness signal; readiness lives at /healthz/ready and the two are not interchangeable.
+app.MapGet("/healthz", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
+
+app.MapPost("/v1/route", async (RouteRequest request, RouteRequestHandler handler, CancellationToken ct) =>
     {
-        InputTokenEstimate = request.ComplexityHints?.InputTokenEstimate ?? 0,
-        RequiresMultiStep = request.ComplexityHints?.RequiresMultiStep ?? false,
-        RequiresRetrieval = request.ComplexityHints?.RequiresRetrieval ?? false,
-        RequiresToolCalls = request.ComplexityHints?.RequiresToolCalls ?? false,
-    });
-
-    var pricing = TierPricingCatalog.FromEnvironment();
-    var decision = TierSelector.Select(score, request.CostCeilingUsd, pricing);
-
-    return decision.Outcome == RoutingOutcome.Denied
-        ? Results.Json(new { request.CorrelationId, error = "CostCeilingExceeded", decision }, statusCode: 402)
-        : Results.Ok(new { request.CorrelationId, decision });
-});
+        var result = await handler.HandleAsync(request, ct);
+        return Results.Json(result.Body, statusCode: result.StatusCode);
+    })
+    .AddEndpointFilter<RequireAppRoleFilter>()
+    .WithName("Route");
 
 app.Run();
 
-internal sealed record RouteRequest(
-    string CorrelationId,
-    string Lane,
-    string TaskKind,
-    decimal CostCeilingUsd,
-    int LatencyBudgetMs,
-    ComplexityHintsDto? ComplexityHints);
-
-internal sealed record ComplexityHintsDto(
-    int InputTokenEstimate,
-    bool RequiresMultiStep,
-    bool RequiresRetrieval,
-    bool RequiresToolCalls);
-
-internal static class TierPricingCatalog
+/// <summary>
+/// The governance baseline the router starts from when no policy set has been written yet.
+///
+/// Configuration supplies the identifiers only. The permissions themselves are deliberately the
+/// most restrictive shape that can still serve the demo — one approved vendor, Confidential as the
+/// ceiling, Restricted not permitted — because a baseline that is permissive by default is a
+/// baseline nobody notices is permissive.
+/// </summary>
+internal static class DefaultPolicySet
 {
-    // Placeholder pricing. T-013 replaces this with gateway-reported rates.
-    public static List<TierPricing> FromEnvironment() =>
-    [
-        new()
+    public static PolicySet From(RouterPolicyOptions options) => new()
+    {
+        Id = options.SetId,
+        BusinessUnit = options.BusinessUnit,
+        DisplayName = options.SetId,
+        ApprovedVendors = new HashSet<ModelVendor> { ModelVendor.AzureOpenAI },
+        MaxClassification = new Dictionary<ModelVendor, DataClassification>
         {
-            Tier = ModelTier.Economy,
-            Deployment = Environment.GetEnvironmentVariable("MODEL_TIER_ECONOMY") ?? "gpt-5.4-mini",
-            CostPerRequestUsd = 0.004m,
+            [ModelVendor.AzureOpenAI] = DataClassification.Confidential,
         },
-        new()
-        {
-            Tier = ModelTier.Standard,
-            Deployment = Environment.GetEnvironmentVariable("MODEL_TIER_STANDARD") ?? "gpt-5.4",
-            CostPerRequestUsd = 0.031m,
-        },
-        new()
-        {
-            Tier = ModelTier.Premium,
-            Deployment = Environment.GetEnvironmentVariable("MODEL_TIER_PREMIUM") ?? "gpt-5.6-sol",
-            CostPerRequestUsd = 0.180m,
-        },
-    ];
+        MaxCostPerRequestUsd = 1.0m,
+        PermitsRestrictedData = false,
+    };
 }
+
+/// <summary>Present so a test host can reference the composition root.</summary>
+public partial class Program;
 
 ===== FILE: src/router-service/Dockerfile =====
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
@@ -13099,5 +13500,127 @@ guarantee was never real; it was the appearance of one.
   passes the test above — but it is a different system with different governance, and explaining
   that under pressure costs more than the beat is worth. Reconsider post-demo as a real
   sovereignty story rather than as a hedge.
+
+===== FILE: scripts/policy-no-development-environment.sh =====
+#!/usr/bin/env bash
+#
+# Fails the build if any deployment artefact declares the ASP.NET Core Development environment.
+#
+# router-service honours Router:Authorization:Enabled=false only when the host reports the
+# Development environment, which switches off UseAuthentication, UseAuthorization and the
+# Router.Invoke endpoint filter in one move. That affordance is legitimate on a developer's
+# machine and is a full authentication bypass anywhere else.
+#
+# The affordance was justified by analogy to enable_private_networking. That analogy only holds
+# if it is enforced the way enable_private_networking is enforced -- by a job that fails the
+# build -- rather than merely asserted in a code comment. This is that job.
+#
+# It is one of two controls. The other is a startup-time guard in Security/RouterAuthorization.cs
+# which refuses to start unauthenticated on a host that is demonstrably not a workstation. This
+# script gives the PR-time signal; the guard closes the portal and CLI paths that never see a PR.
+#
+# Grep-based, so it is a tripwire rather than a proof, on the same terms as
+# scripts/policy-no-public-endpoints.sh.
+
+set -euo pipefail
+
+FAILED=0
+
+# Deployment artefacts only. Local development files are the point of the affordance:
+# src/router-service/appsettings.Development.json is loaded solely when a developer selects that
+# environment, and banning it there would ban the thing being permitted.
+SCAN_TARGETS=()
+for path in apps infrastructure .github/workflows; do
+  [ -e "$path" ] && SCAN_TARGETS+=("$path")
+done
+[ -d src ] && SCAN_TARGETS+=("src")
+
+if [ ${#SCAN_TARGETS[@]} -eq 0 ]; then
+  echo "SKIP: no deployment stacks present yet."
+  exit 0
+fi
+
+# Candidate artefacts. src/ is included only for container definitions -- appsettings.Development.json
+# is the affordance being permitted, so scanning application config there would ban the thing the
+# exception exists for.
+FILES=$(find "${SCAN_TARGETS[@]}" \
+  \( -path '@@CMTEND@@node_modules' -o -path '@@CMTEND@@.terraform' -o -path '@@CMTEND@@bin' -o -path '@@CMTEND@@obj' \) -prune -o \
+  -type f \( -name '*.tf' -o -name '*.tfvars' -o -name '*.yml' -o -name '*.yaml' \
+             -o -name 'Dockerfile*' -o -name '*.env' -o -name 'compose*.y*ml' \) -print \
+  | grep -v '^src/' || true)
+DOCKERFILES=$(find src -type f -name 'Dockerfile*' 2>/dev/null || true)
+FILES=$(printf '%s\n%s\n' "$FILES" "$DOCKERFILES" | grep -v '^$' | sort -u || true)
+
+# A Terraform env block spells the name and the value on separate lines:
+#
+#   env {
+#     name  = "ASPNETCORE_ENVIRONMENT"
+#     value = "Development"
+#   }
+#
+# A line-at-a-time grep cannot see that, and that block is precisely the one-line-of-HCL bypass
+# this script exists to catch. So the scan is windowed: a trigger match arms a short lookahead,
+# and a value match anywhere inside the window is a hit. The window also covers the same line, so
+# single-line spellings (Dockerfile ENV, workflow env:, .env, -e flags) are caught by the same pass.
+WINDOW=4
+
+scan() {
+  local label="$1" trigger="$2" value="$3" found=0 out
+  [ -z "$FILES" ] && return 0
+
+  out=$(printf '%s\n' "$FILES" | while IFS= read -r file; do
+    [ -f "$file" ] || continue
+    awk -v file="$file" -v trigger="$trigger" -v value="$value" -v window="$WINDOW" '
+      {
+        line = tolower($0)
+        if (line ~ trigger) { armed = window; armed_line = NR; armed_text = $0 }
+        if (armed > 0) {
+          if (line ~ value) {
+            printf "%s:%d: %s\n", file, armed_line, trim(armed_text)
+            if (NR != armed_line) printf "%s:%d: %s\n", file, NR, trim($0)
+            armed = 0
+            next
+          }
+          armed--
+        }
+      }
+      function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+    ' "$file"
+  done)
+
+  if [ -n "$out" ]; then
+    echo "FAIL: $label"
+    echo "$out"
+    found=1
+  fi
+  return $found
+}
+
+# Regexes are matched against a lowercased line, so they are written lowercase.
+if ! scan "a deployment artefact sets the ASP.NET environment to Development." \
+  '(aspnetcore|dotnet)_environment' \
+  'development'; then
+  FAILED=1
+fi
+
+# The same bypass reached by the other lever: pinning the flag off in deployed configuration.
+# Harmless while the environment is not Development, and exactly half of a two-step bypass.
+if ! scan "a deployment artefact disables Router.Invoke app-role enforcement." \
+  'router(__|:)authorization(__|:)enabled' \
+  'false'; then
+  FAILED=1
+fi
+
+if [ "$FAILED" -ne 0 ]; then
+  echo ""
+  echo "The Development environment disables Router.Invoke enforcement in router-service."
+  echo "Principle IV makes the router the sole path to a model; an unauthenticated router is that"
+  echo "path standing open. Realism Checklist item 2 requires app roles to gate the action, and"
+  echo "requires an unprivileged identity to be shown being denied, live."
+  echo "See .specify/memory/constitution.md and src/router-service/Security/RouterAuthorization.cs."
+  exit 1
+fi
+
+echo "PASS: no deployment artefact selects the Development environment or disables app-role enforcement."
 
 __SCAFFOLD_PAYLOAD_END__*/

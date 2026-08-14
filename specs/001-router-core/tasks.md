@@ -32,8 +32,12 @@ Last updated 2026-08-14.
 
 ## Phase 2 — Router core (day 4 to 7)
 
-- **T-011** router-service skeleton, health endpoint, correlation-ID middleware, Application
-  Insights wiring.
+- [x] **T-011** router-service skeleton, health endpoint, correlation-ID middleware, Application
+  Insights wiring. *(Done. Liveness at `/healthz/live` and readiness at `/healthz/ready` are
+  deliberately separate — a readiness check that reports healthy while the decision store is
+  unreachable hides the failure ADR-007 says must be surfaced. Telemetry is config-driven and
+  managed-identity authenticated, with sampling disabled per ADR-004, and the host builds and runs
+  its tests with no Azure resource in reach.)*
 - [x] **T-012** Complexity scoring: pure, deterministic, exhaustively unit-tested. This is the
   coverage-gated assembly. *(Done — `Fcmr.Router.Decisions` at 93.6% line coverage.)*
 - [x] **T-013** Tier selection and cost ceiling enforcement, including the downgrade-versus-deny
@@ -41,16 +45,28 @@ Last updated 2026-08-14.
   candidate list marked every same-tier model as selected, which would have mis-attributed
   scoreboard cost the moment Feature 002 put four vendors in one tier; and within-tier selection
   took the first match rather than the cheapest.)*
-- **T-014** Decision persistence to Cosmos plus telemetry. **Validate the Application Insights
+- **T-014** Decision persistence to Cosmos plus telemetry. *(Port is defined and in use:
+  `IRoutingDecisionStore`, currently backed by `InMemoryRoutingDecisionStore`. The Cosmos adapter
+  is a registration change.)* **Validate the Application Insights
   latency and sampling assumption here against the AC-5 five-second budget, and build the Cosmos
   change-feed fallback behind configuration regardless.**
-- **T-015** POST /v1/route implemented against contracts/router-api.md, with contract tests.
+- [x] **T-015** POST /v1/route implemented against contracts/router-api.md, with contract tests.
+  *(Done — HTTP-to-`RoutingPlanner.Plan()` translation only. The previous stub called
+  `TierSelector` directly and so bypassed `PolicyGate`; that is fixed. Two contract gaps closed in
+  ADR-009: `dataClassification` is required rather than defaulted, and the response states whether
+  a model actually ran instead of leaving it to be inferred from a null.)*
 - **T-016** GET /v1/scoreboard aggregation, including the Premium baseline delta.
 
 ## Phase 3 — Approval gate (day 7 to 9)
 
 - **T-017** Approval domain model, state machine, and evidence-packet hashing.
 - **T-018** Approval API per contract, segregation-of-duties enforcement, and the expiry job.
+  **Carries a CI expiry:** the `contract-conformance` job in `.github/workflows/quality-gate.yml`
+  is non-required *only* until this task lands. `Fcmr.Contract.Tests` currently fails 13 approval
+  cases because no approval API host exists, which is the job reporting a real gap rather than
+  noise. **On completion of T-018, remove `continue-on-error: true` from that job and add it to
+  the required checks.** A non-blocking job with no recorded date on which it becomes blocking is
+  a skip with more YAML. The 28 router contract cases already pass and must not regress.
 - **T-019** Append-only auditEvents, with a service identity holding no update or delete rights.
 - **T-020** One-query correlation reconstruction endpoint satisfying AC-8.
 

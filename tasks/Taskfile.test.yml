@@ -3,17 +3,25 @@ version: '3'
 tasks:
   default:
     desc: Run the test suites that exist today
-    # contract, integration, and e2e are deliberately not in the default run: their projects do
-    # not exist until T-015, T-035, and a deployed environment. A default task that always fails
-    # is a default task people stop running.
+    # integration and e2e stay out of the default run: they need a deployed environment, and a
+    # default task that always fails is a default task people stop running.
+    #
+    # contract is now in, because tests/Fcmr.Contract.Tests exists (T-015). It is red while the
+    # endpoints it specifies are still being written, and that is the process working. Removing
+    # it from the default run to restore a green board would delete the only signal that says how
+    # much of the published contract is actually served.
     cmds:
       - task: unit
+      - task: contract
       - task: ui
 
   unit:
     desc: Run unit tests with coverage collection
+    # Solution-wide, minus the contract suite, which measures a different thing: conformance to a
+    # published contract rather than the behaviour of a unit. Listing unit projects by hand
+    # instead would silently stop running the next one somebody adds.
     cmds:
-      - dotnet test --collect:"XPlat Code Coverage" --results-directory ./TestResults
+      - dotnet test --filter "FullyQualifiedName!~Fcmr.Contract.Tests" --collect:"XPlat Code Coverage" --results-directory ./TestResults
 
   coverage:
     desc: Enforce the 70% coverage threshold on router decision logic
