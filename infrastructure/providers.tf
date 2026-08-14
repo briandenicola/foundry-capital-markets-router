@@ -4,7 +4,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 4.14"
+      version = "~> 5.0"
     }
     # Foundry accounts, projects, and managedComputeDeployments use preview API versions the
     # azurerm provider does not model yet.
