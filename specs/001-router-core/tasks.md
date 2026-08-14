@@ -89,8 +89,9 @@ Last updated 2026-08-14.
   - **T-027g** Agent failure-mode matrix implemented and demonstrable: tool error, model timeout, no
     eligible model, step-budget exhaustion. **No silent retry on a different tier** — it would
     corrupt the cost figures the scoreboard claims.
-  - **T-027h** Determinism harness: fixed seeds, pinned temperature, recorded transcripts. Feeds the
-    no-Azure fallback in T-040.
+  - **T-027h** Determinism harness: fixed seeds and pinned temperature so rehearsal runs are
+    comparable. Transcripts are recorded **for evaluation and for out-of-product narration only**;
+    no code path may replay one into the UI. ADR-007.
 
 ## Phase 5 — Scoreboard UI (day 12 to 17)
 
@@ -152,9 +153,14 @@ existing references elsewhere in the repository stay valid.
 - **T-037** Coverage to at least 70% on router decision logic; close the gaps.
 - **T-038** docs/architecture.md, docs/threat-model.md, and ADRs 001 onward.
 - **T-039** Timed unattended task cloud:up from zero. Must land under 45 minutes.
-- **T-040** Local no-Azure fallback path, rehearsed end to end.
+- **T-040** **Honest-failure path**, rehearsed end to end. When a model or agent dependency is
+  unreachable, every lane surfaces which dependency failed, what the request would have done, and
+  the governed decision that was still made — rather than substituting a recorded result. Replaces
+  the deleted no-Azure replay fallback (ADR-007). This is a real task, not the absence of one: the
+  failure screens must be as rehearsed as the success screens, because they are now the thing that
+  runs if 9/10 goes wrong.
 - **T-041** Demo runbook: narrative beats, timings, failure recovery, seeded fixtures.
 
 ## 9/5 to 9/10 — Freeze
 
-No feature work. Rehearsal, fallback drills, and bug fixes only.
+No feature work. Rehearsal, honest-failure drills, and bug fixes only.

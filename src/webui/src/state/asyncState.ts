@@ -28,7 +28,12 @@ export type AsyncState<T> =
    */
   | { status: 'partial'; data: T; missing: string[]; freshness: Freshness }
   /**
-   * A complete answer from a fallback source.
+   * A complete answer from a fallback *source* -- never from a fallback *reasoner*.
+   *
+   * ADR-007 draws the line this state must not cross: re-reading real evidence by another path is
+   * permitted, substituting recorded reasoning for live reasoning is not. `degraded` is for the
+   * former only. A lane must never report `degraded` because the agent could not run; that is an
+   * `error`, and it must say which dependency failed.
    *
    * The scoreboard reads Application Insights and falls back to the Cosmos change feed when the
    * five-second freshness budget cannot be met. The audience is told which one they are looking

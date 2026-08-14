@@ -7,7 +7,7 @@
 | 9/5 | Build freeze. Feature work stops. |
 | 9/6 | Full timed rebuild from zero. Record the elapsed time. |
 | 9/8 | Rehearse the full narrative end to end, twice. |
-| 9/9 | Rehearse the fallback path. Rebuild the environment fresh. Seed data. |
+| 9/9 | Rehearse the honest-failure path. Seed data. Leave the environment **warm** — do not rebuild into the demo. |
 | 9/10 morning | Smoke check every beat below. Do not change anything after this. |
 
 ## Pre-flight
@@ -144,13 +144,14 @@ much as from the demonstrations.
 |---|---|
 | Scoreboard stale beyond five seconds | Switch the source to the Cosmos change feed by configuration. Rehearsed on 9/9. |
 | A lane service is unhealthy | Skip its beat. Beats 3, 4, and 5 are independent. Never debug live. |
-| Foundry throttling | Fall back to the seeded pre-recorded batch. Say plainly that it is pre-recorded. |
-| Azure access fails entirely | Run the local fallback. Label it as the fallback. Do not present Beat 2 from it — the private-posture claim cannot be made from a local environment. |
+| Foundry throttling | Retry once, then say plainly that the platform is throttling and show the governed refusal. Do not substitute a pre-recorded batch into the UI. |
+| Azure access fails entirely | Stop the live demo and narrate the rehearsal **recording**, out of the product UI, named as a recording. Never render replayed reasoning in the UI (ADR-007). |
 | A question you cannot answer | Say so and write it down. This audience trusts an admission far more than a confident guess. |
 
 ## Do not
 
-- Do not present the local fallback as evidence of the private posture.
+- Do not replay a recorded agent transcript through the product UI, under any circumstance. If
+  inference is not running, say so. This is the one rule with no exception (ADR-007).
 - Do not describe the simulated OMS as anything other than simulated.
 - Do not defend the quality metric by adding an LLM-as-judge number on the fly.
 - Do not skip Beat 8's unrehearsed pick. It is the most persuasive three minutes in the deck.

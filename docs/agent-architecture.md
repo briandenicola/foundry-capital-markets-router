@@ -113,8 +113,11 @@ carried-over context makes cost and reproducibility unexplainable, and both are 
 | No eligible model (policy) | Explicit refusal naming the exclusions. Never a fallback to an unapproved model |
 | Agent exceeds step budget | Halt, return partial work, log. An agent that loops on stage is worse than one that stops |
 
-**Determinism for rehearsal.** Fixed seeds, pinned temperature, recorded fixtures. T-040's
-no-Azure fallback replays recorded agent transcripts, so the narrative survives losing the network.
+**Determinism for rehearsal.** Fixed seeds and pinned temperature, so runs are comparable between
+rehearsals. This constrains the agent's *inputs and sampling*; it never replaces inference. There
+is deliberately **no transcript replay path** — a recording of an agent reasoning, rendered in the
+product UI, would falsify the one claim this demo exists to make. See
+docs/adr/007-no-simulated-agent-reasoning.md.
 
 ## Open questions
 

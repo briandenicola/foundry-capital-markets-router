@@ -7,6 +7,7 @@ tasks:
       - task: format
       - task: terraform
       - task: policy
+      - task: no-simulated-reasoning
       - task: preview-sdk-pins
       - task: api-types
       - task: diagrams
@@ -28,6 +29,11 @@ tasks:
     desc: Fail if any Terraform resource exposes a public data-plane endpoint
     cmds:
       - ./scripts/policy-no-public-endpoints.sh
+
+  no-simulated-reasoning:
+    desc: Fail if any path could render recorded output as live agent reasoning
+    cmds:
+      - ./scripts/policy-no-simulated-reasoning.sh
 
   preview-sdk-pins:
     desc: Fail if any preview Azure AI SDK is not exact-pinned

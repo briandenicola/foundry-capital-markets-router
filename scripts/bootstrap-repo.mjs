@@ -16,7 +16,7 @@
  * All writes are normalised and constrained to the resolved repo root.
  */
 
-import { readFile, mkdir, writeFile, access } from 'node:fs/promises';
+import { readFile, mkdir, writeFile, access, chmod } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -171,6 +171,10 @@ async function main() {
     if (!opts.dryRun) {
       await mkdir(path.dirname(target), { recursive: true });
       await writeFile(target, normaliseContent(files.get(rel)), 'utf8');
+      // Shell scripts are invoked as ./scripts/foo.sh by CI and the Taskfile. A payload carries
+      // content but not permissions, so without this a freshly scaffolded repo fails its own
+      // quality gate on a permission error that looks nothing like the missing exec bit it is.
+      if (rel.endsWith('.sh')) await chmod(target, 0o755);
     }
     (present ? overwritten : created).push(rel);
   }
@@ -519,6 +523,13 @@ data/generated/
 test-results/
 playwright-report/
 blob-report/
+# Squad: ignore runtime state (logs, inbox, sessions)
+.squad/orchestration-log/
+.squad/log/
+.squad/decisions/inbox/
+.squad/sessions/
+# Squad: SubSquad activation file (local to this machine)
+.squad-workstream
 
 ===== FILE: .gitattributes =====
 * text=auto eol=lf
@@ -537,6 +548,11 @@ blob-report/
 *.png       binary
 *.svg       text eol=lf
 *.pdf       binary
+# Squad: union merge for append-only team state files
+.squad/decisions.md merge=union
+.squad/agents/@@CMTEND@@history.md merge=union
+.squad/log/** merge=union
+.squad/orchestration-log/** merge=union
 
 ===== FILE: .dockerignore =====
 *@@CMTEND@@bin
@@ -901,6 +917,7 @@ tasks:
       - task: format
       - task: terraform
       - task: policy
+      - task: no-simulated-reasoning
       - task: preview-sdk-pins
       - task: api-types
       - task: diagrams
@@ -922,6 +939,11 @@ tasks:
     desc: Fail if any Terraform resource exposes a public data-plane endpoint
     cmds:
       - ./scripts/policy-no-public-endpoints.sh
+
+  no-simulated-reasoning:
+    desc: Fail if any path could render recorded output as live agent reasoning
+    cmds:
+      - ./scripts/policy-no-simulated-reasoning.sh
 
   preview-sdk-pins:
     desc: Fail if any preview Azure AI SDK is not exact-pinned
@@ -1226,6 +1248,16 @@ jobs:
       # the types are not regenerated, the drift shows up on stage rather than here.
       - run: node scripts/generate-api-types.mjs --check
 
+  no-simulated-reasoning:
+    name: no simulated agent reasoning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # ADR-007. The demo's one irreplaceable claim is live agent reasoning; a replayed transcript
+      # rendered in the product UI falsifies it, and a label does not repair that. Enforced here
+      # rather than asserted in a doc, for the same reason the public-endpoint rule is.
+      - run: ./scripts/policy-no-simulated-reasoning.sh
+
   diagrams:
     name: architecture diagrams in sync
     runs-on: ubuntu-latest
@@ -1434,16 +1466,24 @@ A change is not done until all of the following pass in CI on the pull request:
 5. **IaC scan** — Checkov runs against both Terraform stacks with no failed high-severity checks.
 6. **No-public-endpoint policy test** — a dedicated CI job fails the build if any resource in
    either stack exposes a public data-plane endpoint.
+7. **No-simulated-reasoning policy test** — a dedicated CI job fails the build if any service or UI
+   path could render recorded output as live agent reasoning (ADR-007).
 
 ## Delivery Constraints
 
 - Build complete by 2026-09-05. Demo delivered 2026-09-10. Feature work stops on 9/5; the period
-  from 9/5 to 9/10 is rehearsal, hardening, and fallback preparation only.
+  from 9/5 to 9/10 is rehearsal, hardening, and resilience work only.
 - The full environment must stand up from zero via `task cloud:up` and tear down via
   `task cloud:down`, unattended, in under 45 minutes.
-- A local, no-Azure fallback path must exist and be rehearsed, in case cloud access fails on the
-  day. The fallback is explicitly labelled as such in the UI and never presented as the
-  private-posture proof.
+- **No fallback may simulate agent reasoning.** No mock, replay, recorded transcript, or fixture
+  may stand in for live model inference in any demonstrated path. If the agent cannot run, the
+  demo says the agent cannot run. The test: a fallback is permitted when it changes *where real
+  evidence is read from*; it is forbidden when it changes *whether the evidence is real*.
+  Inputs may be seeded and evidence may be re-read; reasoning is always live. See
+  docs/adr/007-no-simulated-agent-reasoning.md.
+- Contingency for total cloud failure is disclosure, not substitution: present rehearsal
+  recordings **as recordings, outside the product UI**. The private-posture beats do not depend on
+  inference and remain demonstrable independently.
 
 ## Engineering Guardrails
 
@@ -1826,7 +1866,9 @@ demonstrated live, so I can withdraw my objection on evidence rather than assura
 **Demo rehearsal**
 
 - task cloud:up from zero completes under 45 minutes unattended.
-- Local fallback path runs the full narrative without Azure.
+- Agent failure is demonstrable and honest: when a dependency is unreachable, the UI names the
+  failed dependency rather than substituting a recorded result. No path renders simulated
+  reasoning (ADR-007).
 
 ## Open Questions
 
@@ -2243,8 +2285,9 @@ Last updated 2026-08-14.
   - **T-027g** Agent failure-mode matrix implemented and demonstrable: tool error, model timeout, no
     eligible model, step-budget exhaustion. **No silent retry on a different tier** — it would
     corrupt the cost figures the scoreboard claims.
-  - **T-027h** Determinism harness: fixed seeds, pinned temperature, recorded transcripts. Feeds the
-    no-Azure fallback in T-040.
+  - **T-027h** Determinism harness: fixed seeds and pinned temperature so rehearsal runs are
+    comparable. Transcripts are recorded **for evaluation and for out-of-product narration only**;
+    no code path may replay one into the UI. ADR-007.
 
 ## Phase 5 — Scoreboard UI (day 12 to 17)
 
@@ -2306,12 +2349,17 @@ existing references elsewhere in the repository stay valid.
 - **T-037** Coverage to at least 70% on router decision logic; close the gaps.
 - **T-038** docs/architecture.md, docs/threat-model.md, and ADRs 001 onward.
 - **T-039** Timed unattended task cloud:up from zero. Must land under 45 minutes.
-- **T-040** Local no-Azure fallback path, rehearsed end to end.
+- **T-040** **Honest-failure path**, rehearsed end to end. When a model or agent dependency is
+  unreachable, every lane surfaces which dependency failed, what the request would have done, and
+  the governed decision that was still made — rather than substituting a recorded result. Replaces
+  the deleted no-Azure replay fallback (ADR-007). This is a real task, not the absence of one: the
+  failure screens must be as rehearsed as the success screens, because they are now the thing that
+  runs if 9/10 goes wrong.
 - **T-041** Demo runbook: narrative beats, timings, failure recovery, seeded fixtures.
 
 ## 9/5 to 9/10 — Freeze
 
-No feature work. Rehearsal, fallback drills, and bug fixes only.
+No feature work. Rehearsal, honest-failure drills, and bug fixes only.
 
 ===== FILE: specs/002-governed-exchange/spec.md =====
 # Feature 002 — Governed AI Exchange
@@ -3516,7 +3564,7 @@ Regulatory certification of any kind.
 | 9/5 | Build freeze. Feature work stops. |
 | 9/6 | Full timed rebuild from zero. Record the elapsed time. |
 | 9/8 | Rehearse the full narrative end to end, twice. |
-| 9/9 | Rehearse the fallback path. Rebuild the environment fresh. Seed data. |
+| 9/9 | Rehearse the honest-failure path. Seed data. Leave the environment **warm** — do not rebuild into the demo. |
 | 9/10 morning | Smoke check every beat below. Do not change anything after this. |
 
 ## Pre-flight
@@ -3653,13 +3701,14 @@ much as from the demonstrations.
 |---|---|
 | Scoreboard stale beyond five seconds | Switch the source to the Cosmos change feed by configuration. Rehearsed on 9/9. |
 | A lane service is unhealthy | Skip its beat. Beats 3, 4, and 5 are independent. Never debug live. |
-| Foundry throttling | Fall back to the seeded pre-recorded batch. Say plainly that it is pre-recorded. |
-| Azure access fails entirely | Run the local fallback. Label it as the fallback. Do not present Beat 2 from it — the private-posture claim cannot be made from a local environment. |
+| Foundry throttling | Retry once, then say plainly that the platform is throttling and show the governed refusal. Do not substitute a pre-recorded batch into the UI. |
+| Azure access fails entirely | Stop the live demo and narrate the rehearsal **recording**, out of the product UI, named as a recording. Never render replayed reasoning in the UI (ADR-007). |
 | A question you cannot answer | Say so and write it down. This audience trusts an admission far more than a confident guess. |
 
 ## Do not
 
-- Do not present the local fallback as evidence of the private posture.
+- Do not replay a recorded agent transcript through the product UI, under any circumstance. If
+  inference is not running, say so. This is the one rule with no exception (ADR-007).
 - Do not describe the simulated OMS as anything other than simulated.
 - Do not defend the quality metric by adding an LLM-as-judge number on the fly.
 - Do not skip Beat 8's unrehearsed pick. It is the most persuasive three minutes in the deck.
@@ -4107,8 +4156,11 @@ carried-over context makes cost and reproducibility unexplainable, and both are 
 | No eligible model (policy) | Explicit refusal naming the exclusions. Never a fallback to an unapproved model |
 | Agent exceeds step budget | Halt, return partial work, log. An agent that loops on stage is worse than one that stops |
 
-**Determinism for rehearsal.** Fixed seeds, pinned temperature, recorded fixtures. T-040's
-no-Azure fallback replays recorded agent transcripts, so the narrative survives losing the network.
+**Determinism for rehearsal.** Fixed seeds and pinned temperature, so runs are comparable between
+rehearsals. This constrains the agent's *inputs and sampling*; it never replaces inference. There
+is deliberately **no transcript replay path** — a recording of an agent reasoning, rendered in the
+product UI, would falsify the one claim this demo exists to make. See
+docs/adr/007-no-simulated-agent-reasoning.md.
 
 ## Open questions
 
@@ -9616,7 +9668,12 @@ export type AsyncState<T> =
    @@CMTEND@@
   | { status: 'partial'; data: T; missing: string[]; freshness: Freshness }
   /**
-   * A complete answer from a fallback source.
+   * A complete answer from a fallback *source* -- never from a fallback *reasoner*.
+   *
+   * ADR-007 draws the line this state must not cross: re-reading real evidence by another path is
+   * permitted, substituting recorded reasoning for live reasoning is not. `degraded` is for the
+   * former only. A lane must never report `degraded` because the agent could not run; that is an
+   * `error`, and it must say which dependency failed.
    *
    * The scoreboard reads Application Insights and falls back to the Cosmos change feed when the
    * five-second freshness budget cannot be met. The audience is told which one they are looking
@@ -12872,5 +12929,175 @@ These diagrams follow the **Terraform**, not the prose, wherever the two disagre
 appear in `docs/architecture.md` but do not exist in the IaC are drawn as red dashed
 `NOT IN TERRAFORM` boxes rather than omitted, so the gap is visible instead of invisible. The
 current divergences are catalogued in [`../decisions-needed.md`](../decisions-needed.md) items 5–7.
+
+===== FILE: scripts/policy-no-simulated-reasoning.sh =====
+#!/usr/bin/env bash
+#
+# Fails the build if any code path could render simulated agent reasoning.
+#
+# ADR-007: a fallback is permitted when it changes *where real evidence is read from*, and
+# forbidden when it changes *whether the evidence is real*. The demo's one irreplaceable claim is
+# live agent reasoning inside a governed environment; a replayed transcript rendered in the product
+# UI falsifies exactly that claim, and no on-screen label repairs it.
+#
+# This is a grep-based guard, so it is a tripwire rather than a proof. It catches the mechanism
+# being reintroduced by habit -- which is the realistic failure -- not a determined author. That is
+# the same bargain scripts/policy-no-public-endpoints.sh makes.
+
+set -euo pipefail
+
+fail=0
+
+# Directories where live inference is the product. Test projects are excluded: a unit test *must*
+# be able to fake a model client, and doing so there is correct rather than suspect.
+SCAN_DIRS=()
+for d in src/router-service src/research-service src/surveillance-service src/orderrouting-service src/webui/src; do
+  [ -d "$d" ] && SCAN_DIRS+=("$d")
+done
+
+if [ ${#SCAN_DIRS[@]} -eq 0 ]; then
+  echo "SKIP: no service or UI source directories present yet."
+  exit 0
+fi
+
+# Terms that denote standing in for inference. Deliberately does not include "fallback" alone:
+# ADR-004's telemetry read-path fallback is permitted, and a rule that cries wolf gets disabled.
+BANNED='replayTranscript|ReplayTranscript|transcript_replay|TranscriptReplay|RecordedAgent|recordedAgent|FakeAgent|fakeAgent|MockAgent|mockAgent|StubAgent|stubAgent|SimulatedAgent|simulatedAgent|CannedResponse|cannedResponse|FakeModel|fakeModel|MockModel|mockModel|SimulatedInference|simulatedInference|replayAgent|ReplayAgent'
+
+hits=$(grep -rnE "$BANNED" "${SCAN_DIRS[@]}" \
+  --include='*.cs' --include='*.ts' --include='*.tsx' \
+  2>/dev/null | grep -v '/node_modules/' | grep -v '/obj/' | grep -v '/bin/' || true)
+
+if [ -n "$hits" ]; then
+  echo "FAIL: a code path appears able to substitute recorded output for live agent reasoning."
+  echo "$hits"
+  echo
+  echo "ADR-007 forbids this. If the agent cannot run, the demo must say so rather than replay a"
+  echo "transcript. Recordings may be narrated out of the product UI, never rendered inside it."
+  fail=1
+fi
+
+# The simulated OMS is permitted and required (T-034), but only for *market execution*. If the
+# word 'simulate' migrates from execution into the reasoning path, the exception is being widened.
+oms_hits=$(grep -rniE 'simulat' "${SCAN_DIRS[@]}" \
+  --include='*.cs' --include='*.ts' --include='*.tsx' \
+  2>/dev/null | grep -v '/node_modules/' | grep -v '/obj/' | grep -v '/bin/' \
+  | grep -iE 'agent|reason|inference|model|completion|prompt' || true)
+
+if [ -n "$oms_hits" ]; then
+  echo "FAIL: 'simulated' appears alongside agent/model/reasoning terms."
+  echo "$oms_hits"
+  echo
+  echo "The simulated-OMS exception covers market execution only. Simulating reasoning is ADR-007's"
+  echo "central prohibition."
+  fail=1
+fi
+
+if [ "$fail" -eq 0 ]; then
+  echo "PASS: no path can render simulated agent reasoning."
+fi
+
+exit "$fail"
+
+===== FILE: docs/adr/007-no-simulated-agent-reasoning.md =====
+# 007. No fallback may simulate agent reasoning
+
+- **Status**: Accepted
+- **Date**: 2026-08-14
+- **Amends**: the Delivery Constraints clause of `.specify/memory/constitution.md` requiring a
+  local, no-Azure fallback path.
+
+## Context
+
+The demo makes one claim that cannot be made by any other means: **a real agent, reasoning live,
+inside a governed private environment.** Every other claim — private networking, policy routing,
+approval gates, cost attribution — could in principle be argued from a slide deck. The agentic
+claim cannot. It is the reason the audience is in the room.
+
+The plan as written contained a mechanism that would quietly destroy that claim. T-027h built a
+determinism harness that recorded agent transcripts, and T-040 replayed those transcripts as a
+local, no-Azure fallback so that "the narrative survives losing the network."
+
+Consider what that produces on stage. The network fails, the fallback engages, and the screen shows
+an agent selecting tools, reasoning across steps, and citing sources — none of which is happening.
+The audience is watching a recording of reasoning while being told they are watching reasoning. The
+label "fallback" in the corner of the UI does not repair this, because the thing being falsified is
+not the *data source*; it is **whether any inference occurred at all**.
+
+There is a second, worse property. A transcript replay cannot fail. It will happily "reason" about
+a question the agent has never seen, because it is not reasoning — it is playing back. The moment
+someone asks for Beat 8's unrehearsed pick, the fallback either produces a confident answer to a
+question it never received, or it visibly breaks in the least recoverable way possible. Both
+outcomes are worse than having no fallback.
+
+This audience's entire professional instinct is detecting a control that is asserted rather than
+enforced. Handing them a simulation of the one thing that cannot be simulated is not a hedge
+against failure. It is the failure.
+
+## Decision
+
+**No fallback, mock, replay, or fixture may stand in for live model inference or live agent
+reasoning in any demonstrated path.**
+
+If the agent cannot run, the demo says the agent cannot run.
+
+The governing test for any current or future fallback:
+
+> A fallback is permitted when it changes **where real evidence is read from**.
+> A fallback is forbidden when it changes **whether the evidence is real**.
+
+Applied to what exists today:
+
+| Mechanism | Verdict | Why |
+|---|---|---|
+| Recorded agent transcript replay (T-027h → T-040) | **Removed** | Changes whether inference happened. This is the whole of the objection. |
+| Local no-Azure narrative path (T-040) | **Removed** | Cannot exist without the above. Its only content was replay. |
+| Scoreboard reads Cosmos change feed instead of App Insights (ADR-004) | **Kept** | Same real telemetry from a real request, read by a different path. Surfaces as `degraded` with the reason on screen. |
+| `partial` / `degraded` UI states | **Kept, and load-bearing** | These are the *opposite* of masking: they force a screen to declare incompleteness. Removing them makes masking easier, not harder. |
+| Simulated OMS | **Kept** | We cannot place real trades into a real market. Disclosed on the record itself, not as a corner disclaimer (T-034). The simulation is of *market execution*, never of reasoning. |
+| Seeded synthetic corpus | **Kept** | Fixes the agent's *inputs* so runs are comparable. The agent still reasons over them live. |
+| Pinned temperature / fixed seeds | **Kept** | Constrains sampling, does not replace inference. The model still runs. |
+
+The distinction that survives all of these: **inputs may be fixed and evidence may be re-read;
+reasoning is always live.**
+
+## Consequences
+
+**We accept a demo that can fail in front of the audience.** If Azure is unreachable on 9/10, the
+agentic beats do not run. This is a deliberate, eyes-open trade: a demo that can fail is the only
+kind whose success means anything. A demo that cannot fail has not demonstrated anything.
+
+Mitigation moves from *substitution* to *resilience and disclosure*:
+
+1. **Reduce the probability of failure** rather than paper over it — rehearse on the real
+   environment, keep the environment warm on 9/9 rather than rebuilding into the demo, and hold
+   quota headroom.
+2. **Fail informatively.** When a lane cannot reach a model, the UI states which dependency failed
+   and what the request would have done. Showing the *governed refusal* of an unrunnable request is
+   still a true demonstration of the control plane, and it is honest.
+3. **Have a non-simulating contingency.** If the agents cannot run, present the recorded transcripts
+   **as a recording, out of the product UI**, narrated as "here is what this did in rehearsal." A
+   video honestly labelled is fine. A live-looking UI replaying a script is not. The difference is
+   entirely whether the audience could mistake it for the real thing.
+4. **The private-posture beats survive independently.** Beat 2 is Terraform, portal, and denied
+   connections; it does not need an agent. If inference is down, the governance story is still fully
+   demonstrable — which is a good argument for keeping the two claims separable.
+
+**Cost:** we lose the guarantee that the full narrative runs on 9/10 under any conditions. That
+guarantee was never real; it was the appearance of one.
+
+## Alternatives considered
+
+- **Keep replay, label it harder.** Rejected. No label is sufficient, because the audience cannot
+  distinguish a labelled replay from a labelled live run by looking, and the claim under test is
+  precisely the one the label concedes. It also invites the question we least want: "so how much of
+  what we saw earlier was real?" — retroactively contaminating the beats that *were* live.
+- **Replay only on network failure, silently.** Rejected outright, and worth naming so it is never
+  proposed again: a silent substitution of recorded reasoning for live reasoning is
+  indistinguishable from fabricating the demo.
+- **A small local model as the fallback.** Rejected for 9/10. It is genuinely live inference and so
+  passes the test above — but it is a different system with different governance, and explaining
+  that under pressure costs more than the beat is worth. Reconsider post-demo as a real
+  sovereignty story rather than as a hedge.
 
 __SCAFFOLD_PAYLOAD_END__*/

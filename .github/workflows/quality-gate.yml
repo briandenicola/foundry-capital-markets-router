@@ -103,6 +103,16 @@ jobs:
       # the types are not regenerated, the drift shows up on stage rather than here.
       - run: node scripts/generate-api-types.mjs --check
 
+  no-simulated-reasoning:
+    name: no simulated agent reasoning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # ADR-007. The demo's one irreplaceable claim is live agent reasoning; a replayed transcript
+      # rendered in the product UI falsifies it, and a label does not repair that. Enforced here
+      # rather than asserted in a doc, for the same reason the public-endpoint rule is.
+      - run: ./scripts/policy-no-simulated-reasoning.sh
+
   diagrams:
     name: architecture diagrams in sync
     runs-on: ubuntu-latest

@@ -211,7 +211,9 @@ demonstrated live, so I can withdraw my objection on evidence rather than assura
 **Demo rehearsal**
 
 - task cloud:up from zero completes under 45 minutes unattended.
-- Local fallback path runs the full narrative without Azure.
+- Agent failure is demonstrable and honest: when a dependency is unreachable, the UI names the
+  failed dependency rather than substituting a recorded result. No path renders simulated
+  reasoning (ADR-007).
 
 ## Open Questions
 

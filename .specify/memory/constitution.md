@@ -140,16 +140,24 @@ A change is not done until all of the following pass in CI on the pull request:
 5. **IaC scan** — Checkov runs against both Terraform stacks with no failed high-severity checks.
 6. **No-public-endpoint policy test** — a dedicated CI job fails the build if any resource in
    either stack exposes a public data-plane endpoint.
+7. **No-simulated-reasoning policy test** — a dedicated CI job fails the build if any service or UI
+   path could render recorded output as live agent reasoning (ADR-007).
 
 ## Delivery Constraints
 
 - Build complete by 2026-09-05. Demo delivered 2026-09-10. Feature work stops on 9/5; the period
-  from 9/5 to 9/10 is rehearsal, hardening, and fallback preparation only.
+  from 9/5 to 9/10 is rehearsal, hardening, and resilience work only.
 - The full environment must stand up from zero via `task cloud:up` and tear down via
   `task cloud:down`, unattended, in under 45 minutes.
-- A local, no-Azure fallback path must exist and be rehearsed, in case cloud access fails on the
-  day. The fallback is explicitly labelled as such in the UI and never presented as the
-  private-posture proof.
+- **No fallback may simulate agent reasoning.** No mock, replay, recorded transcript, or fixture
+  may stand in for live model inference in any demonstrated path. If the agent cannot run, the
+  demo says the agent cannot run. The test: a fallback is permitted when it changes *where real
+  evidence is read from*; it is forbidden when it changes *whether the evidence is real*.
+  Inputs may be seeded and evidence may be re-read; reasoning is always live. See
+  docs/adr/007-no-simulated-agent-reasoning.md.
+- Contingency for total cloud failure is disclosure, not substitution: present rehearsal
+  recordings **as recordings, outside the product UI**. The private-posture beats do not depend on
+  inference and remain demonstrable independently.
 
 ## Engineering Guardrails
 
