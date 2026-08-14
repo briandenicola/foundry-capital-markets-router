@@ -227,10 +227,10 @@ Four objections block agentic AI adoption in capital markets. This demo removes 
 
 | Objection | What is demonstrated |
 |---|---|
-| "We will be locked into whichever vendor we pick." | A vendor is disabled in policy, live, and an identical request from an unchanged application replans onto a different vendor. No redeploy, no prompt change. |
-| "It is not private enough for us." | Every Azure data plane reachable only over private endpoints. A public-access attempt is shown failing, live. Restricted-classification data routes only to open-weight models on dedicated compute inside the VNet. |
 | "The spend is unbounded and unexplainable." | Every model call routed by cost and task complexity, with a live scoreboard showing cost, latency, tier, and rationale against a premium-tier baseline. |
 | "We cannot let an agent act on its own." | Every consequential action halts for human approval with a full evidence packet, enforced segregation of duties, and a reconstructable audit trail. |
+| "It is not private enough for us." | Every Azure data plane reachable only over private endpoints. A public-access attempt is shown failing, live. Restricted-classification data routes only to open-weight models on dedicated compute inside the VNet. |
+| "We will be locked into whichever vendor we pick." | A vendor is disabled in policy, live, and an identical request from an unchanged application replans onto a different vendor. No redeploy, no prompt change. |
 
 ## The model catalog
 
@@ -3009,8 +3009,9 @@ State them in the audience's own language: it is not private enough, the spend i
 cannot let it act alone, and we will be locked into whichever vendor we pick this year. Say that
 each will be answered with a demonstration rather than a claim.
 
-Then set the frame the rest of the hour hangs from: **models are temporary, governance is
-strategic.** Every model named today will be superseded. The exchange is what survives that.
+Then plant one line early and leave it: **models are temporary, governance is strategic.** Every
+model named today will be superseded. The exchange is what survives that. You will not cash this
+in until Beat 5 — let it sit.
 
 ### Beat 2 — Private by construction (4 min)
 
@@ -3022,38 +3023,7 @@ silently stop being private.
 
 *This beat answers the compliance veto. It is table stakes, not a wow moment. Do not linger.*
 
-### Beat 3 — The model swap nobody deployed for (6 min) — PRIMARY
-
-This is the beat the demo exists for. Do not rush it and do not narrate over the pause.
-
-Submit a research request through the UI. Note out loud that **the application never named a
-model** — it submitted a business request. Show the resulting execution plan: the request was
-decomposed into tasks, and different tasks went to different vendors, because different vendors
-are better at different things.
-
-Now open the policy set and **disable Anthropic**. Change nothing else. No redeploy, no code
-change, no prompt change.
-
-Resubmit the identical request.
-
-Stop talking. Let the room watch the plan rebuild itself around the remaining approved vendors,
-and let them read the exclusion reason: *Vendor Anthropic is not approved under policy set
-'CapitalMarkets-US'.*
-
-Then say the only line this beat needs:
-
-> The application did not change. The prompt did not change. Policy changed, and the architecture
-> obeyed. That is the difference between using a model and governing one.
-
-Follow it immediately with the harder version. Set the request's data classification to
-**Restricted** and resubmit. Every hosted vendor is excluded by policy, and execution lands on the
-open-weight model running on dedicated capacity inside the VNet — the only destination cleared for
-that data.
-
-*This beat answers the lock-in objection, and it answers it with a mechanism rather than a
-roadmap. If the audience takes one thing away, it should be this.*
-
-### Beat 4 — Router economics (6 min) — PRIMARY
+### Beat 3 — Router economics (6 min) — PRIMARY
 
 Run a batch of comparable requests. Open the scoreboard.
 
@@ -3068,7 +3038,7 @@ recomputable, not model-graded. Say why that choice was made.
 
 *This is the beat for the AI decision maker. It is the budget argument.*
 
-### Beat 5 — Surveillance triage (6 min) — PRIMARY
+### Beat 4 — Surveillance triage (6 min) — PRIMARY
 
 Show the untriaged queue: 500 synthetic alerts. Run triage.
 
@@ -3078,6 +3048,35 @@ evidence.
 Propose escalation. It does not escalate — it enters the approval queue.
 
 *This is the beat for trade leadership. It is the headcount and backlog argument.*
+
+### Beat 5 — The model swap nobody deployed for (4 min) — SUPPORTING
+
+Having shown the router optimising within a vendor, show what happens when the vendor itself
+changes.
+
+Submit a research request. Note out loud that **the application never named a model** — it
+submitted a business request.
+
+Now open the policy set and **disable Anthropic**. Change nothing else. No redeploy, no code
+change, no prompt change. Resubmit the identical request.
+
+Stop talking. Let the room watch execution replan around the remaining approved vendors, and let
+them read the exclusion reason: *Vendor Anthropic is not approved under policy set
+'CapitalMarkets-US'.*
+
+Then say the only line this beat needs:
+
+> The application did not change. The prompt did not change. Policy changed, and the architecture
+> obeyed. That is the difference between using a model and governing one.
+
+If time allows, follow it with the harder version: set the request's data classification to
+**Restricted** and resubmit. Every hosted vendor is excluded by policy, and execution lands on the
+open-weight model running on dedicated capacity inside the VNet — the only destination cleared for
+that data.
+
+*This beat answers the lock-in objection with a mechanism rather than a roadmap. It is deliberately
+positioned after the two primary beats: it lands hardest once the audience already believes the
+routing is real. If you are running short, this is the beat to compress, not to cut.*
 
 ### Beat 6 — Human in the loop (5 min)
 
@@ -3223,62 +3222,53 @@ rebuild path creates.
 ===== FILE: docs/decisions-needed.md =====
 # Decisions needed
 
-Open forks where `docs/requirements.md` and the decisions locked during discovery disagree. These
-are recorded rather than silently resolved, because each one is a judgement call that belongs to
-the demo owner.
+Forks where `docs/requirements.md` and the decisions locked during discovery disagree. These are
+recorded rather than silently resolved, because each is a judgement call that belongs to the demo
+owner.
 
 Nothing here blocks the scaffold. Each has a working default so the repository stands up today.
 
----
-
-## 1. Orchestration: M365 Agents SDK or Foundry hosted agents
-
-**The conflict.** `requirements.md` specifies the M365 Agents SDK. Discovery locked Foundry hosted
-agents with MCP tools, recorded in ADR 005.
-
-**Why it matters.** This is the genuine architectural fork in the repository, not a preference.
-The two produce different deployment topologies, different identity models, and different demo
-surfaces. Retrofitting later is not a refactor; it is a rewrite of the orchestration layer.
-
-| | Foundry hosted agents + MCP (current) | M365 Agents SDK |
+| # | Fork | Status |
 |---|---|---|
-| Surface | Custom Vite UI | Teams / M365 |
-| Fits "locked-down Azure" posture | Directly | Requires M365 tenant reach |
-| Tool model | MCP | SDK-native |
-| Matches requirements.md | No | Yes |
-
-**Current default:** Foundry hosted agents, per your explicit instruction during discovery.
-
-**Recommendation:** keep Foundry hosted agents. The stated environment requirement is a locked-down
-Azure network simulating a regulated client; an M365-surfaced agent pulls the demo out of that
-boundary and weakens the very posture the audience came to see.
-
-**Needs your call.**
+| 1 | Orchestration SDK | **Resolved** — Foundry hosted agents |
+| 2 | Which wow moment leads | **Resolved** — scoreboard and surveillance stay primary |
+| 3 | Routing signal breadth | Open |
+| 4 | Three lanes or research only | Open |
 
 ---
 
-## 2. Which wow moment leads
+## 1. Orchestration: M365 Agents SDK or Foundry hosted agents — RESOLVED
 
-**The conflict.** Discovery selected the cost-and-quality scoreboard as the primary wow. Reading
-`requirements.md`, its Scene 9 — disable a vendor by policy, rerun the identical request, watch
-execution replan to a different vendor with the application and prompt unchanged — is arguably
-stronger for this audience.
+**Resolution: Foundry hosted agents + MCP.** Confirmed by the demo owner. `requirements.md`
+specifies the M365 Agents SDK; we are deliberately diverging from it.
 
-**Why it matters.** The scoreboard proves optimisation. The policy swap proves **control**. A
-compliance and trade-leadership audience has seen cost charts before. Very few have seen a vendor
-removed live without an application change.
+**Rationale.** The stated environment requirement is a locked-down Azure network simulating a
+regulated client. An M365-surfaced agent pulls the demo out of that boundary and weakens the very
+posture the audience came to see. Recorded in ADR 005.
 
-The scoreboard also carries a risk the policy swap does not: it invites the audience to argue
-about your numbers. The policy swap invites no arithmetic.
-
-**Recommendation:** lead with the policy swap, land the scoreboard second as supporting evidence.
-Both are already in the runbook; this is an ordering decision, cheap to change.
-
-**Needs your call.**
+**Consequence.** The Vite scoreboard UI is the only presentation surface. There is no Teams
+integration and none is planned. If a future audience asks for Teams, treat it as a new feature
+with its own ADR, not as a configuration change — the identity and network models differ.
 
 ---
 
-## 3. Routing signals: expand beyond cost and complexity
+## 2. Which wow moment leads — RESOLVED
+
+**Resolution: the router economics scoreboard and surveillance triage remain the primary beats.**
+Confirmed by the demo owner. `requirements.md` Scene 9 is explicitly set aside for now.
+
+The policy-driven model swap is retained as **Beat 5, SUPPORTING**, positioned after both primary
+beats. It is not cut, for two reasons: the capability is real and already implemented in
+`PolicyGate`, and it is the only beat that answers the vendor lock-in objection. It simply is not
+the headline.
+
+**Consequence for the runbook.** Beat 5 is the designated compression point if the demo runs long.
+Compress it; do not cut it. Cutting it leaves the four-objection framing in Beat 1 with a promise
+the demo never keeps.
+
+---
+
+## 3. Routing signals: expand beyond cost and complexity — OPEN
 
 **The conflict.** Feature 001 routes on cost and task complexity, per discovery. `requirements.md`
 additionally requires intent, confidence target, and **data classification**.
@@ -3291,7 +3281,7 @@ classification and confidence targets are specified in Feature 002 but not imple
 
 ---
 
-## 4. Scope: three lanes or research only
+## 4. Scope: three lanes or research only — OPEN
 
 **The conflict.** Discovery required three lanes — research, surveillance, order routing.
 `requirements.md` scripts only the Capital Markets Research Assistant.

@@ -42,7 +42,7 @@ Target Audience:
 
 Presenter:
 
-"Today Wells has access to multiple models.
+"Today the bank has access to multiple models.
 
 GPT. Claude. Grok.
 
@@ -247,7 +247,7 @@ Applications Integrate To
 
 Presenter:
 
-"This architecture protects Wells from vendor lock\-in while preserving governance, observability, and control."
+"This architecture protects the bank from vendor lock\-in while preserving governance, observability, and control."
 
 ---
 
