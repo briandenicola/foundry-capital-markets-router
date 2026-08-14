@@ -20,11 +20,16 @@ public sealed record TierPricing
 }
 
 /// <summary>
-/// Selects a model tier from a complexity score and an enforced cost ceiling.
+/// Selects a model from a complexity score and an enforced cost ceiling.
 ///
 /// The ceiling is a control, not a report. When the indicated tier exceeds it, the selector
 /// downgrades to the most capable affordable tier, and denies only when nothing is affordable.
 /// A denial is returned to the caller and surfaced in the UI; it is never silently absorbed.
+///
+/// The catalog is multi-vendor, so a tier holds several competing deployments. Selection is
+/// therefore tier-first then cheapest-within-tier, and candidates are identified by deployment
+/// rather than by tier. Identifying by tier alone would mark every same-tier competitor as the
+/// one that ran, and the scoreboard's cost attribution is only as honest as that identification.
 /// </summary>
 public static class TierSelector
 {
@@ -41,7 +46,7 @@ public static class TierSelector
         }
 
         var indicated = ComplexityScorer.IndicatedTier(complexityScore);
-        var available = pricing.Where(p => p.Available).OrderBy(p => p.Tier).ToList();
+        var available = pricing.Where(p => p.Available).ToList();
 
         if (available.Count == 0)
         {
@@ -55,22 +60,18 @@ public static class TierSelector
         {
             var cheapest = available.MinBy(p => p.CostPerRequestUsd)!;
             return Denied(complexityScore, costCeilingUsd, pricing,
-                $"Cheapest available tier {cheapest.Tier} projects {cheapest.CostPerRequestUsd:0.###} USD " +
+                $"Cheapest available model {cheapest.Deployment} projects {cheapest.CostPerRequestUsd:0.###} USD " +
                 $"against a ceiling of {costCeilingUsd:0.###} USD.");
         }
 
-        // Prefer the indicated tier. If it is unaffordable or unavailable, take the most capable
-        // tier that is both.
-        var chosen = affordable.FirstOrDefault(p => p.Tier == indicated)
-                     ?? affordable.MaxBy(p => p.Tier)!;
-
+        var chosen = Choose(affordable, indicated);
         var downgraded = chosen.Tier < indicated;
 
         var rationale = downgraded
             ? $"Complexity {complexityScore:0.##} indicated {indicated}, but its projected cost exceeds the " +
-              $"{costCeilingUsd:0.###} USD ceiling. Downgraded to {chosen.Tier} at " +
+              $"{costCeilingUsd:0.###} USD ceiling. Downgraded to {chosen.Tier} ({chosen.Deployment}) at " +
               $"{chosen.CostPerRequestUsd:0.###} USD."
-            : $"Complexity {complexityScore:0.##} indicated {chosen.Tier}, projected at " +
+            : $"Complexity {complexityScore:0.##} indicated {chosen.Tier}, served by {chosen.Deployment} at " +
               $"{chosen.CostPerRequestUsd:0.###} USD within the {costCeilingUsd:0.###} USD ceiling.";
 
         return new RoutingDecision
@@ -80,9 +81,42 @@ public static class TierSelector
             Outcome = downgraded ? RoutingOutcome.Downgraded : RoutingOutcome.Routed,
             SelectedTier = chosen.Tier,
             SelectedDeployment = chosen.Deployment,
+            SelectedVendor = chosen.Vendor,
             CandidateTiers = BuildCandidates(pricing, chosen, costCeilingUsd, indicated),
             Rationale = rationale,
         };
+    }
+
+    /// <summary>
+    /// Prefer the indicated tier. Failing that, the most capable tier below it. Failing that —
+    /// which happens only when the indicated tier is unavailable and nothing cheaper exists —
+    /// the cheapest tier above. Ties within a tier always break toward lower cost.
+    /// </summary>
+    private static TierPricing Choose(List<TierPricing> affordable, ModelTier indicated)
+    {
+        var atIndicated = affordable
+            .Where(p => p.Tier == indicated)
+            .OrderBy(p => p.CostPerRequestUsd)
+            .ThenBy(p => p.Deployment, StringComparer.Ordinal)
+            .FirstOrDefault();
+
+        if (atIndicated is not null)
+        {
+            return atIndicated;
+        }
+
+        var below = affordable
+            .Where(p => p.Tier < indicated)
+            .OrderByDescending(p => p.Tier)
+            .ThenBy(p => p.CostPerRequestUsd)
+            .ThenBy(p => p.Deployment, StringComparer.Ordinal)
+            .FirstOrDefault();
+
+        return below ?? affordable
+            .OrderBy(p => p.Tier)
+            .ThenBy(p => p.CostPerRequestUsd)
+            .ThenBy(p => p.Deployment, StringComparer.Ordinal)
+            .First();
     }
 
     private static RoutingDecision Denied(
@@ -96,6 +130,7 @@ public static class TierSelector
             Outcome = RoutingOutcome.Denied,
             SelectedTier = null,
             SelectedDeployment = null,
+            SelectedVendor = null,
             CandidateTiers = BuildCandidates(pricing, null, ceiling, null),
             Rationale = rationale,
         };
@@ -108,20 +143,33 @@ public static class TierSelector
     {
         var candidates = new List<TierCandidate>(pricing.Count);
 
-        foreach (var p in pricing.OrderBy(p => p.Tier))
+        var ordered = pricing
+            .OrderBy(p => p.Tier)
+            .ThenBy(p => p.CostPerRequestUsd)
+            .ThenBy(p => p.Deployment, StringComparer.Ordinal);
+
+        foreach (var p in ordered)
         {
-            var selected = chosen is not null && p.Tier == chosen.Tier;
+            // Identity is the deployment, not the tier. A multi-vendor catalog holds several
+            // models per tier and only one of them ran.
+            var selected = chosen is not null &&
+                           string.Equals(p.Deployment, chosen.Deployment, StringComparison.Ordinal);
 
             string? reason = null;
             if (!selected)
             {
                 if (!p.Available)
                 {
-                    reason = "Tier unavailable.";
+                    reason = "Model unavailable.";
                 }
                 else if (p.CostPerRequestUsd > ceiling)
                 {
                     reason = $"Projected {p.CostPerRequestUsd:0.###} USD exceeds the {ceiling:0.###} USD ceiling.";
+                }
+                else if (chosen is not null && p.Tier == chosen.Tier)
+                {
+                    reason = $"Same tier as the selected model at a higher projected cost " +
+                             $"({p.CostPerRequestUsd:0.###} against {chosen.CostPerRequestUsd:0.###} USD).";
                 }
                 else if (indicated is not null && p.Tier > indicated)
                 {
@@ -138,6 +186,7 @@ public static class TierSelector
                 Tier = p.Tier,
                 Deployment = p.Deployment,
                 ProjectedCostUsd = p.CostPerRequestUsd,
+                Vendor = p.Vendor,
                 Selected = selected,
                 RejectedReason = reason,
             });

@@ -14,7 +14,7 @@ Sequenced to land before the UI work in Feature 001's Phase 5 needs it.
   subscription wired to `auditEvents`.
 - **T-202** Terraform-managed baseline policy set, seeded at deploy time. `CapitalMarkets-US` with
   all four vendors approved and the classification limits from the data model.
-- **T-203** Policy set repository with optimistic concurrency on `version`. A write with a stale
+- [x] **T-203** Policy set repository with optimistic concurrency on `version`. A write with a stale
   `expectedVersion` fails; it does not merge.
 
 ### API
@@ -30,11 +30,11 @@ Sequenced to land before the UI work in Feature 001's Phase 5 needs it.
 
 - **T-208** Extend `POST /v1/route` with `dataClassification` (**required — omission is a 400, not
   a default**) and optional `policySetId`.
-- **T-209** Wire `PolicyGate` into the routing path **ahead of** `TierSelector`. Assert the order
+- [x] **T-209** Wire `PolicyGate` into the routing path **ahead of** `TierSelector`. Assert the order
   by test; do not leave it to code reading.
-- **T-210** Add `RefusedByPolicy` as a 200 outcome distinct from `Denied`. Callers must not treat a
+- [x] **T-210** Add `RefusedByPolicy` as a 200 outcome distinct from `Denied`. Callers must not treat a
   refusal as a retryable error.
-- **T-211** Persist `policySetId`, `policySetVersion`, `dataClassification`, `selectedVendor`, and
+- [~] **T-211** Persist `policySetId`, `policySetVersion`, `dataClassification`, `selectedVendor`, and
   `policyExclusions` on the decision record. Version is pinned at decision time so a later edit
   cannot rewrite history.
 - **T-212** Policy cache with a **5-second maximum staleness**, matching the contract. Beat 5 fails
@@ -59,10 +59,10 @@ Sequenced to land before the UI work in Feature 001's Phase 5 needs it.
 
 ### Proof
 
-- **T-218** Property test: for any policy set and any request, the selected vendor is in
+- [x] **T-218** Property test: for any policy set and any request, the selected vendor is in
   `approvedVendors` and its `maxClassification` is at least the request classification. This is the
   invariant the feature rests on — assert it exhaustively, not by example.
-- **T-219** Removing each vendor in turn from the four-vendor catalog yields four valid plans; an
+- [x] **T-219** Removing each vendor in turn from the four-vendor catalog yields four valid plans; an
   empty eligible set yields `RefusedByPolicy` naming every exclusion.
 - **T-220** **Rehearse Beat 5 end to end and time it.** Policy change to observable behaviour
   change under 10 seconds, with byte-identical request payloads across both runs, shown in the UI.

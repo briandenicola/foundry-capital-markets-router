@@ -11,28 +11,36 @@ THRESHOLD="${1:?usage: check-coverage.sh <threshold> <assembly>}"
 ASSEMBLY="${2:?usage: check-coverage.sh <threshold> <assembly>}"
 RESULTS_DIR="${3:-./TestResults}"
 
-REPORT=$(find "$RESULTS_DIR" -name 'coverage.cobertura.xml' -print -quit 2>/dev/null || true)
+# Every report is read, not just the first. Each test project emits its own file, and taking
+# only one silently measures the wrong assembly the moment a second test project is added.
+mapfile -t REPORTS < <(find "$RESULTS_DIR" -name 'coverage.cobertura.xml' 2>/dev/null || true)
 
-if [ -z "$REPORT" ]; then
+if [ "${#REPORTS[@]}" -eq 0 ]; then
   echo "FAIL: no coverage report found under ${RESULTS_DIR}."
   echo "Run: dotnet test --collect:\"XPlat Code Coverage\" --results-directory ${RESULTS_DIR}"
   exit 1
 fi
 
-RATE=$(python3 - "$REPORT" "$ASSEMBLY" <<'PY'
+RATE=$(python3 - "$ASSEMBLY" "${REPORTS[@]}" <<'COVPY'
 import sys, xml.etree.ElementTree as ET
-report, assembly = sys.argv[1], sys.argv[2]
-root = ET.parse(report).getroot()
-covered = valid = 0
-for pkg in root.iter('package'):
-    if assembly.lower() not in (pkg.get('name') or '').lower():
-        continue
-    for line in pkg.iter('line'):
-        valid += 1
-        if int(line.get('hits', '0')) > 0:
-            covered += 1
+assembly, reports = sys.argv[1], sys.argv[2:]
+# A line is covered if any report covers it, so the union is taken rather than the sum. Summing
+# would double-count lines appearing in more than one report and inflate the result.
+seen = {}
+for report in reports:
+    root = ET.parse(report).getroot()
+    for pkg in root.iter('package'):
+        if assembly.lower() not in (pkg.get('name') or '').lower():
+            continue
+        for cls in pkg.iter('class'):
+            filename = cls.get('filename') or ''
+            for line in cls.iter('line'):
+                key = (filename, line.get('number'))
+                seen[key] = max(seen.get(key, 0), int(line.get('hits', '0')))
+valid = len(seen)
+covered = sum(1 for h in seen.values() if h > 0)
 print(round(100.0 * covered / valid, 2) if valid else -1.0)
-PY
+COVPY
 )
 
 if [ "$(python3 -c "print(1 if float('$RATE') < 0 else 0)")" = "1" ]; then

@@ -1,9 +1,11 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Fcmr.Demo.Data/Fcmr.Demo.Data.csproj" />
     <Project Path="src/Fcmr.Router.Decisions/Fcmr.Router.Decisions.csproj" />
     <Project Path="src/router-service/router-service.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Fcmr.Demo.Data.Tests/Fcmr.Demo.Data.Tests.csproj" />
     <Project Path="tests/Fcmr.Router.Decisions.Tests/Fcmr.Router.Decisions.Tests.csproj" />
   </Folder>
 </Solution>

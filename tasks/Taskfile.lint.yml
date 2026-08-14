@@ -8,6 +8,8 @@ tasks:
       - task: terraform
       - task: policy
       - task: preview-sdk-pins
+      - task: api-types
+      - task: diagrams
       - task: ui
 
   format:
@@ -40,6 +42,17 @@ tasks:
           exit 1
         fi
         echo "All Azure.AI.* dependencies are exact-pinned."
+
+  api-types:
+    desc: Fail if the UI's generated API types have drifted from the C# decision library
+    cmds:
+      - node scripts/generate-api-types.mjs --check
+
+  diagrams:
+    desc: Fail if the committed architecture diagrams have drifted from their generator
+    cmds:
+      - node scripts/diagrams/generate-diagrams.mjs --out docs/diagrams --check
+      - node scripts/diagrams/validate.mjs docs/diagrams
 
   ui:
     desc: Lint and typecheck the scoreboard UI

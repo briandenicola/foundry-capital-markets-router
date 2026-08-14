@@ -2,10 +2,13 @@ version: '3'
 
 tasks:
   default:
-    desc: Run unit, contract, and integration tests
+    desc: Run the test suites that exist today
+    # contract, integration, and e2e are deliberately not in the default run: their projects do
+    # not exist until T-015, T-035, and a deployed environment. A default task that always fails
+    # is a default task people stop running.
     cmds:
       - task: unit
-      - task: contract
+      - task: ui
 
   unit:
     desc: Run unit tests with coverage collection

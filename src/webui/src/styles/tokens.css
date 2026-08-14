@@ -1,0 +1,185 @@
+/*
+  Projector-first type scale.
+
+  The demo is read from the back of a room, on a projector that will be dimmer and lower contrast
+  than any monitor this was built on. Body text starts at 18px rather than the usual 14, and the
+  scale is deliberately coarse: intermediate sizes are indistinguishable at that distance, so they
+  only create the impression of hierarchy without delivering one.
+
+  Every screen has exactly one hero number. If a screen has two, the audience has to be told which
+  one matters, and by then the moment has passed.
+*/
+
+:root {
+  --font-sans: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Cascadia Code', ui-monospace, 'SF Mono', monospace;
+
+  --text-hero: 6rem;
+  --text-display: 3rem;
+  --text-heading: 2rem;
+  --text-subheading: 1.5rem;
+  --text-body: 1.125rem;
+  --text-caption: 1rem;
+
+  --ink: #14171a;
+  --ink-muted: #5b6570;
+  --surface: #ffffff;
+  --surface-sunken: #f4f6f8;
+  --border: #d3d9de;
+
+  --accent: #1a56db;
+  --success: #0f7b3e;
+  --warning: #a35a00;
+  --danger: #b3261e;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 1rem;
+  --space-4: 1.5rem;
+  --space-5: 2.5rem;
+
+  --radius: 8px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  color: var(--ink);
+  background: var(--surface-sunken);
+  line-height: 1.5;
+}
+
+.hero-number {
+  font-size: var(--text-hero);
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.app {
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.app__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.app__title {
+  font-size: var(--text-subheading);
+  font-weight: 700;
+  margin: 0;
+}
+
+.app__nav {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.app__nav a {
+  color: var(--ink-muted);
+  text-decoration: none;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius);
+}
+
+.app__nav a[aria-current='page'] {
+  color: var(--accent);
+  background: var(--surface-sunken);
+  font-weight: 600;
+}
+
+.app__main {
+  padding: var(--space-4);
+}
+
+.state {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+  padding: var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.state__title {
+  font-size: var(--text-subheading);
+  font-weight: 600;
+}
+
+.state__detail {
+  color: var(--ink-muted);
+  margin: 0;
+}
+
+.state--error .state__title {
+  color: var(--danger);
+}
+
+.banner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  border-left: 6px solid var(--warning);
+  background: #fff6e6;
+  margin-bottom: var(--space-3);
+}
+
+.banner--danger {
+  border-left-color: var(--danger);
+  background: #fdecea;
+}
+
+.banner--info {
+  border-left-color: var(--accent);
+  background: #eaf0fd;
+}
+
+.banner__detail {
+  color: var(--ink-muted);
+  font-size: var(--text-caption);
+}
+
+.freshness {
+  font-size: var(--text-caption);
+  color: var(--ink-muted);
+  margin: 0 0 var(--space-3);
+}
+
+.freshness--stale {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.button {
+  font: inherit;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+.button:disabled {
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+  border-color: var(--border);
+  cursor: not-allowed;
+}

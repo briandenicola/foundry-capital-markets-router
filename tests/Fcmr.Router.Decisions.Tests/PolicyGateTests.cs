@@ -32,7 +32,9 @@ public class PolicyGateTests
 
     private static PolicySet CapitalMarkets(params ModelVendor[] approved) => new()
     {
-        Name = "CapitalMarkets-US",
+        Id = "CapitalMarkets-US",
+        BusinessUnit = "CapitalMarkets",
+        DisplayName = "Capital Markets — US",
         ApprovedVendors = approved.Length > 0
             ? new HashSet<ModelVendor>(approved)
             : new HashSet<ModelVendor>
@@ -136,17 +138,14 @@ public class PolicyGateTests
     }
 
     [Fact]
-    public void Evaluate_ComposesWithTierSelector_SoPolicyDecidesBeforeCost()
+    public void Evaluate_CarriesThePolicySetIdentityAndVersionForPinning()
     {
-        // Policy decides what is permissible; the router decides what is appropriate among the
-        // permissible. Reversing the order would let a cost optimisation reach an unapproved model.
-        var policy = CapitalMarkets(ModelVendor.AzureOpenAI, ModelVendor.OpenWeight);
+        var policy = CapitalMarkets() with { Version = 7 };
 
-        var evaluation = PolicyGate.Evaluate(Catalog(), policy, DataClassification.Internal);
-        var decision = TierSelector.Select(0.50, 1.00m, evaluation.Eligible);
+        var result = PolicyGate.Evaluate(Catalog(), policy, DataClassification.Internal);
 
-        decision.Outcome.Should().NotBe(RoutingOutcome.Denied);
-        evaluation.Eligible.Should().OnlyContain(c =>
-            c.Vendor == ModelVendor.AzureOpenAI || c.Vendor == ModelVendor.OpenWeight);
+        result.PolicySetId.Should().Be("CapitalMarkets-US");
+        result.PolicySetVersion.Should().Be(7,
+            "the version in force is pinned onto the decision so a later edit cannot rewrite history");
     }
 }

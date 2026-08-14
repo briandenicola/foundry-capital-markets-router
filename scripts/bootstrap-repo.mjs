@@ -31,6 +31,10 @@ const SEP = /^===== FILE: (.+?) =====$/;
 // Payload content needing a globstar uses this token instead; it is restored at write time.
 const GLOBSTAR_TOKEN = '@@GLOBSTAR@@';
 
+// Likewise for a literal block-comment terminator, which appears in CSS and in C-style
+// doc comments carried by the payload.
+const CMTEND_TOKEN = '@@CMTEND@@';
+
 function parseArgs(argv) {
   const opts = { dryRun: false, force: false, root: null, list: false, help: false };
   for (let i = 0; i < argv.length; i++) {
@@ -124,7 +128,11 @@ async function exists(p) {
 }
 
 function normaliseContent(text) {
-  const restored = text.split(GLOBSTAR_TOKEN).join('**');
+  const restored = text
+    .split(GLOBSTAR_TOKEN)
+    .join('**')
+    .split(CMTEND_TOKEN)
+    .join('*' + '/');
   const trimmed = restored.replace(/^\n+/, '').replace(/\s+$/, '');
   return trimmed.length ? trimmed + '\n' : '';
 }
@@ -194,6 +202,7 @@ async function main() {
       '',
       '  git init && git add -A && git commit -m "chore: scaffold repository"',
       '  cp .env.example .env          # then edit: subscription, region, tenant',
+      '  node scripts/diagrams/generate-diagrams.mjs   # architecture diagrams (generated, not drawn)',
       '  task --list                   # review available tasks',
       '  task lint:policy              # verify the no-public-endpoint policy gate passes',
       '  terraform -chdir=infrastructure init',
@@ -530,17 +539,17 @@ blob-report/
 *.pdf       binary
 
 ===== FILE: .dockerignore =====
-@@GLOBSTAR@@/bin
-@@GLOBSTAR@@/obj
-@@GLOBSTAR@@/node_modules
-@@GLOBSTAR@@/dist
-@@GLOBSTAR@@/.terraform
-@@GLOBSTAR@@/.git
-@@GLOBSTAR@@/.github
-@@GLOBSTAR@@/TestResults
-@@GLOBSTAR@@/coverage
-@@GLOBSTAR@@/test-results
-@@GLOBSTAR@@/playwright-report
+*@@CMTEND@@bin
+*@@CMTEND@@obj
+*@@CMTEND@@node_modules
+*@@CMTEND@@dist
+*@@CMTEND@@.terraform
+*@@CMTEND@@.git
+*@@CMTEND@@.github
+*@@CMTEND@@TestResults
+*@@CMTEND@@coverage
+*@@CMTEND@@test-results
+*@@CMTEND@@playwright-report
 .env
 .env.*
 !.env.example
@@ -840,10 +849,13 @@ version: '3'
 
 tasks:
   default:
-    desc: Run unit, contract, and integration tests
+    desc: Run the test suites that exist today
+    # contract, integration, and e2e are deliberately not in the default run: their projects do
+    # not exist until T-015, T-035, and a deployed environment. A default task that always fails
+    # is a default task people stop running.
     cmds:
       - task: unit
-      - task: contract
+      - task: ui
 
   unit:
     desc: Run unit tests with coverage collection
@@ -890,6 +902,8 @@ tasks:
       - task: terraform
       - task: policy
       - task: preview-sdk-pins
+      - task: api-types
+      - task: diagrams
       - task: ui
 
   format:
@@ -922,6 +936,17 @@ tasks:
           exit 1
         fi
         echo "All Azure.AI.* dependencies are exact-pinned."
+
+  api-types:
+    desc: Fail if the UI's generated API types have drifted from the C# decision library
+    cmds:
+      - node scripts/generate-api-types.mjs --check
+
+  diagrams:
+    desc: Fail if the committed architecture diagrams have drifted from their generator
+    cmds:
+      - node scripts/diagrams/generate-diagrams.mjs --out docs/diagrams --check
+      - node scripts/diagrams/validate.mjs docs/diagrams
 
   ui:
     desc: Lint and typecheck the scoreboard UI
@@ -1007,13 +1032,16 @@ updates:
 ===== FILE: Fcmr.slnx =====
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Fcmr.Demo.Data/Fcmr.Demo.Data.csproj" />
     <Project Path="src/Fcmr.Router.Decisions/Fcmr.Router.Decisions.csproj" />
     <Project Path="src/router-service/router-service.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Fcmr.Demo.Data.Tests/Fcmr.Demo.Data.Tests.csproj" />
     <Project Path="tests/Fcmr.Router.Decisions.Tests/Fcmr.Router.Decisions.Tests.csproj" />
   </Folder>
 </Solution>
+
 ===== FILE: .github/copilot-instructions.md =====
 # Copilot Instructions — Foundry Capital Markets Router
 
@@ -1185,6 +1213,32 @@ jobs:
       - run: npm run lint
       - run: npx tsc --noEmit
       - run: npm run test --if-present
+
+  api-types:
+    name: generated api types in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The UI's types are generated from the C# decision library. If a contract type changes and
+      # the types are not regenerated, the drift shows up on stage rather than here.
+      - run: node scripts/generate-api-types.mjs --check
+
+  diagrams:
+    name: architecture diagrams in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The .excalidraw files are build output, not drawings. Regenerating them here is what stops
+      # the architecture picture quietly diverging from the architecture, which is the failure mode
+      # that makes diagrams untrustworthy and therefore unused.
+      - run: node scripts/diagrams/generate-diagrams.mjs --out docs/diagrams --check
+      - run: node scripts/diagrams/validate.mjs docs/diagrams
 
   preview-sdk-pins:
     name: preview sdk pin guard
@@ -1557,6 +1611,7 @@ When to run: [pre-merge, pre-demo, post-deploy]
 | Role | Name | Date |
 |---|---|---|
 | | | |
+
 ===== FILE: specs/001-router-core/spec.md =====
 # Feature 001 — Router Core, Lanes, and Approval Gate
 
@@ -2102,6 +2157,9 @@ The reason field is required when the decision is Rejected.
 Sequenced so that a demonstrable slice exists early and the riskiest unknowns resolve first.
 Target: feature-complete 2026-09-05.
 
+**Status key:** `[x]` complete and gated in CI · `[~]` partially delivered · unmarked = not started.
+Last updated 2026-08-14.
+
 ## Phase 0 — Foundation (day 1 to 2)
 
 - **T-001** Repo scaffold via scripts/bootstrap-repo.mjs; Taskfile tree; Directory.Packages.props;
@@ -2130,10 +2188,13 @@ Target: feature-complete 2026-09-05.
 
 - **T-011** router-service skeleton, health endpoint, correlation-ID middleware, Application
   Insights wiring.
-- **T-012** Complexity scoring: pure, deterministic, exhaustively unit-tested. This is the
-  coverage-gated assembly.
-- **T-013** Tier selection and cost ceiling enforcement, including the downgrade-versus-deny
-  branch.
+- [x] **T-012** Complexity scoring: pure, deterministic, exhaustively unit-tested. This is the
+  coverage-gated assembly. *(Done — `Fcmr.Router.Decisions` at 93.6% line coverage.)*
+- [x] **T-013** Tier selection and cost ceiling enforcement, including the downgrade-versus-deny
+  branch. *(Done, and extended for multi-vendor catalogs. Two defects fixed in the process: the
+  candidate list marked every same-tier model as selected, which would have mis-attributed
+  scoreboard cost the moment Feature 002 put four vendors in one tier; and within-tier selection
+  took the first match rather than the cheapest.)*
 - **T-014** Decision persistence to Cosmos plus telemetry. **Validate the Application Insights
   latency and sampling assumption here against the AC-5 five-second budget, and build the Cosmos
   change-feed fallback behind configuration regardless.**
@@ -2149,7 +2210,7 @@ Target: feature-complete 2026-09-05.
 
 ## Phase 4 — Lanes (day 9 to 15, parallelisable)
 
-- **T-021** Synthetic data generators: research corpus, e-comms, order flow, blotters. Seeded and
+- [x] **T-021** Synthetic data generators: research corpus, e-comms, order flow, blotters. Seeded and
   reproducible.
 - **T-022** AI Search index and ingestion for the research corpus.
 - **T-023** research-service: retrieval-grounded synthesis, per-claim attribution, unattributable
@@ -2191,14 +2252,18 @@ Twelve screens; see `docs/ui-design.md` for the inventory, component layout, and
 Three of the four wow moments are screens in this phase.
 
 - **T-028** Vite, React, and TypeScript shell; Entra authentication; role-aware navigation.
-  - **T-028a** App shell, routing, error boundary, and the projector-grade type scale. Every screen
+  - [x] **T-028a** App shell, routing, error boundary, and the projector-grade type scale. Every screen
     has one number that is deliberately the largest thing on it.
   - **T-028b** MSAL auth, `Router.Invoke` / `Router.Read` / `Approver` role guards. Unauthorised
     navigation is hidden; unauthorised *actions* render disabled with a stated reason — Beat 6
     needs something visible to refuse.
-  - **T-028c** API client, token acquisition, and **types generated from `contracts/`**. Not
+  - [~] **T-028c** API client, token acquisition, and **types generated from `contracts/`**. Not
     hand-written; hand-written types drift and the drift surfaces on stage.
-  - **T-028d** The five required states as shared primitives: loading, empty, error, partial,
+    *(Client and generated types done, gated by the `api-types` CI job. Token acquisition waits on
+    T-028b. **Deviation:** types are generated from the C# records rather than from the contract
+    JSON, because an example payload cannot distinguish an optional field from one that happened to
+    be null — the C# type system already carries that information and the contract examples do not.)*
+  - [x] **T-028d** The five required states as shared primitives: loading, empty, error, partial,
     degraded. Build these before the screens that need them.
   - **T-028e** Request console (screen 1), including data classification on the request.
 - **T-029** Live scoreboard: cost, latency, tier, rationale, quality, within the five-second
@@ -2709,7 +2774,7 @@ Sequenced to land before the UI work in Feature 001's Phase 5 needs it.
   subscription wired to `auditEvents`.
 - **T-202** Terraform-managed baseline policy set, seeded at deploy time. `CapitalMarkets-US` with
   all four vendors approved and the classification limits from the data model.
-- **T-203** Policy set repository with optimistic concurrency on `version`. A write with a stale
+- [x] **T-203** Policy set repository with optimistic concurrency on `version`. A write with a stale
   `expectedVersion` fails; it does not merge.
 
 ### API
@@ -2725,11 +2790,11 @@ Sequenced to land before the UI work in Feature 001's Phase 5 needs it.
 
 - **T-208** Extend `POST /v1/route` with `dataClassification` (**required — omission is a 400, not
   a default**) and optional `policySetId`.
-- **T-209** Wire `PolicyGate` into the routing path **ahead of** `TierSelector`. Assert the order
+- [x] **T-209** Wire `PolicyGate` into the routing path **ahead of** `TierSelector`. Assert the order
   by test; do not leave it to code reading.
-- **T-210** Add `RefusedByPolicy` as a 200 outcome distinct from `Denied`. Callers must not treat a
+- [x] **T-210** Add `RefusedByPolicy` as a 200 outcome distinct from `Denied`. Callers must not treat a
   refusal as a retryable error.
-- **T-211** Persist `policySetId`, `policySetVersion`, `dataClassification`, `selectedVendor`, and
+- [~] **T-211** Persist `policySetId`, `policySetVersion`, `dataClassification`, `selectedVendor`, and
   `policyExclusions` on the decision record. Version is pinned at decision time so a later edit
   cannot rewrite history.
 - **T-212** Policy cache with a **5-second maximum staleness**, matching the contract. Beat 5 fails
@@ -2754,10 +2819,10 @@ Sequenced to land before the UI work in Feature 001's Phase 5 needs it.
 
 ### Proof
 
-- **T-218** Property test: for any policy set and any request, the selected vendor is in
+- [x] **T-218** Property test: for any policy set and any request, the selected vendor is in
   `approvedVendors` and its `maxClassification` is at least the request classification. This is the
   invariant the feature rests on — assert it exhaustively, not by example.
-- **T-219** Removing each vendor in turn from the four-vendor catalog yields four valid plans; an
+- [x] **T-219** Removing each vendor in turn from the four-vendor catalog yields four valid plans; an
   empty eligible set yields `RefusedByPolicy` naming every exclusion.
 - **T-220** **Rehearse Beat 5 end to end and time it.** Policy change to observable behaviour
   change under 10 seconds, with byte-identical request payloads across both runs, shown in the UI.
@@ -2785,6 +2850,7 @@ Sequenced to land before the UI work in Feature 001's Phase 5 needs it.
 
 Slice A cannot start before T-015 and T-019 land, which places it at Feature 001 day 7 at the
 earliest. That is the real constraint on this slice, not its own size.
+
 ===== FILE: docs/README.md =====
 # Documentation
 
@@ -3824,6 +3890,107 @@ as proof of generality.
 
 **Needs confirmation, not a decision,** unless you disagree.
 
+---
+
+## 5. APIM is in the docs and the constitution but not in the Terraform — OPEN
+
+**The conflict.** `docs/architecture.md` places an "APIM AI Gateway" in the component diagram and
+at step 4 of the data flow, and the constitution states that *all model traffic transits APIM as AI
+gateway for token metering, cost ceilings and content-safety enforcement*. There is no
+`azurerm_api_management` resource in either stack, no APIM subnet, and no private DNS zone for it.
+It is not forgotten — **T-008** schedules it in Phase 1 — but it is unbuilt, and Phase 1 is the
+part of the plan already competing with the managed-compute and hosted-agent spikes.
+
+This was found while generating the architecture diagrams: the diagram could not be drawn from the
+Terraform and match the prose. The diagrams follow the Terraform and mark APIM as
+**NOT IN TERRAFORM** in red.
+
+**Why it matters.** Realism Checklist item 5 promises a cost ceiling enforced in two independent
+places — policy and gateway. Today it is enforced in one, in application code, by the same team
+that benefits from the number being low. To a compliance audience that is the difference between a
+control and an intention.
+
+**The options.**
+
+- **A. Build it.** APIM Developer or Basic v2 in an internal VNet, all Foundry traffic through it.
+  Real, but it is a week of work plus a private DNS zone and an ~8-hour first deploy for the classic
+  SKU. It buys a control the story already claims.
+- **B. Drop the claim.** Amend the constitution and `docs/architecture.md` to state that cost
+  ceilings are enforced in the router and audited in Cosmos, and that gateway-level metering is
+  Phase 2. Honest, cheap, and weakens Beat 9 slightly.
+- **C. Stub it.** Leave the prose, show a slide. **Not acceptable** — the demo's premise is a real
+  lockdown environment, and the first architect who asks to see the APIM instance ends the credibility
+  of everything else on the screen.
+
+**Recommendation: B for 9/10, A as the stated next increment.** The demo's claim is that governance
+decides the vendor, which `PolicyGate` fully delivers without APIM. Claiming a second enforcement
+point that does not exist risks the one claim that does.
+
+**Owner: Brian. Needed by 8/22** — after that, option A no longer fits before the freeze.
+
+---
+
+## 6. Hosted agents do not traverse the router — OPEN
+
+**The conflict.** The demo's headline is *every model call passes through one governed chokepoint*.
+Lane services hold no Foundry role; `apps/roles.tf` grants "Azure AI Developer" on the project to
+`router-service` alone, which is what makes the chokepoint real for lane-service→model calls.
+
+But we chose **Foundry hosted agents**. A hosted agent executes under the *Foundry project
+identity* and invokes its own model deployment inside Foundry. That call does not pass through
+`router-service`, is not evaluated by `PolicyGate`, and does not appear on the cost scoreboard.
+
+**Why it matters.** It is the sharpest question a technical reviewer can ask in Beat 4, and the
+scoreboard in Beat 9 may be showing a sample while presenting as a total. Being asked this on stage
+and not having an answer costs more than the gap itself.
+
+**The options.**
+
+- **A. Constrain the agents.** Hosted agents perform tool use and orchestration only; every model
+  inference is a tool call back into `router-service`. Preserves the claim exactly. Costs latency
+  and some of the reason for using hosted agents at all.
+- **B. Narrow the claim.** "Every *application* model call is governed; agent-internal reasoning is
+  metered by Foundry and reconciled in the scoreboard." Truthful, and needs the scoreboard to show
+  two sources rather than one.
+- **C. Reconcile after the fact.** Pull Foundry's own token telemetry into the scoreboard so the
+  total is correct even though the enforcement point is not universal. Governance-by-detection
+  rather than governance-by-prevention — a real distinction to this audience.
+
+**Recommendation: A for the research lane, B stated plainly for the rest.** The research lane is
+the showcase and is worth the latency. Say the boundary out loud in Beat 4 rather than being
+caught at it — naming your own limitation is what makes the rest of the claims believable.
+
+**Blocked on T-027a** (the Foundry hosted-agent spike), which is the first thing that needs Azure.
+
+---
+
+## 7. Smaller divergences found while diagramming — FYI
+
+Recorded here so they are decided rather than discovered:
+
+1. **`privatelink.openai.azure.com` is declared but has no private endpoint.** `locals.tf` creates
+   six DNS zones; `private-endpoints.tf` creates five endpoints. Either dead config or an
+   unfinished intent — resolve before an auditor asks.
+2. **Log Analytics and App Insights have no private endpoint.** There is no AMPLS. Principle II
+   says all Azure data-plane traffic traverses private endpoints; telemetry ingestion does not.
+   Decide whether telemetry counts as a data plane, and make `policy-no-public-endpoints.sh` take
+   that position explicitly.
+3. **Serverless model deployments are never actually created.** `local.serverless_models` is only
+   an output; there is no `Microsoft.CognitiveServices/accounts/deployments` resource. The catalog
+   and the demo both assume these exist. **This will fail on first deploy.**
+4. **Region restriction is all-or-nothing.** `PolicyGate.Evaluate` compares one `executionRegion`
+   against `AllowedRegions` and, on mismatch, excludes the entire catalog with an identical reason
+   — including the open-weight model running inside our own VNet, which is the one candidate a
+   region rule should never exclude.
+5. **`Downgraded` has no policy equivalent.** If policy removes the indicated tier's candidates,
+   `TierSelector` reports `Routed` at a lower tier because it never saw the removed ones. Beat 5's
+   restricted-data path therefore renders as a plain `Routed` unless the UI gives `policyExclusions`
+   equal prominence to `candidateTiers` (T-216).
+6. **The audit store is not technically append-only.** `auditEvents` is an ordinary Cosmos SQL
+   container; immutability is a property of the writing code, not the store. For an audience whose
+   entire objection is auditability, either close this with a deny-write role split or state it in
+   Beat 9's exclusions.
+
 ===== FILE: docs/agent-architecture.md =====
 # Agent architecture
 
@@ -4083,6 +4250,7 @@ disabled with the reason stated.
    Restricted-data demonstration, but it edges towards the application choosing routing inputs.
    Current position: classification is a property of the *request*, not a routing preference, so
    exposing it is consistent with Principle IV.
+
 ===== FILE: scripts/policy-no-public-endpoints.sh =====
 #!/usr/bin/env bash
 # Fails if any Terraform resource exposes a public data-plane endpoint.
@@ -4217,28 +4385,36 @@ THRESHOLD="${1:?usage: check-coverage.sh <threshold> <assembly>}"
 ASSEMBLY="${2:?usage: check-coverage.sh <threshold> <assembly>}"
 RESULTS_DIR="${3:-./TestResults}"
 
-REPORT=$(find "$RESULTS_DIR" -name 'coverage.cobertura.xml' -print -quit 2>/dev/null || true)
+# Every report is read, not just the first. Each test project emits its own file, and taking
+# only one silently measures the wrong assembly the moment a second test project is added.
+mapfile -t REPORTS < <(find "$RESULTS_DIR" -name 'coverage.cobertura.xml' 2>/dev/null || true)
 
-if [ -z "$REPORT" ]; then
+if [ "${#REPORTS[@]}" -eq 0 ]; then
   echo "FAIL: no coverage report found under ${RESULTS_DIR}."
   echo "Run: dotnet test --collect:\"XPlat Code Coverage\" --results-directory ${RESULTS_DIR}"
   exit 1
 fi
 
-RATE=$(python3 - "$REPORT" "$ASSEMBLY" <<'PY'
+RATE=$(python3 - "$ASSEMBLY" "${REPORTS[@]}" <<'COVPY'
 import sys, xml.etree.ElementTree as ET
-report, assembly = sys.argv[1], sys.argv[2]
-root = ET.parse(report).getroot()
-covered = valid = 0
-for pkg in root.iter('package'):
-    if assembly.lower() not in (pkg.get('name') or '').lower():
-        continue
-    for line in pkg.iter('line'):
-        valid += 1
-        if int(line.get('hits', '0')) > 0:
-            covered += 1
+assembly, reports = sys.argv[1], sys.argv[2:]
+# A line is covered if any report covers it, so the union is taken rather than the sum. Summing
+# would double-count lines appearing in more than one report and inflate the result.
+seen = {}
+for report in reports:
+    root = ET.parse(report).getroot()
+    for pkg in root.iter('package'):
+        if assembly.lower() not in (pkg.get('name') or '').lower():
+            continue
+        for cls in pkg.iter('class'):
+            filename = cls.get('filename') or ''
+            for line in cls.iter('line'):
+                key = (filename, line.get('number'))
+                seen[key] = max(seen.get(key, 0), int(line.get('hits', '0')))
+valid = len(seen)
+covered = sum(1 for h in seen.values() if h > 0)
 print(round(100.0 * covered / valid, 2) if valid else -1.0)
-PY
+COVPY
 )
 
 if [ "$(python3 -c "print(1 if float('$RATE') < 0 else 0)")" = "1" ]; then
@@ -4989,6 +5165,7 @@ output "serverless_models" {
   description = "Models served by Azure-hosted serverless endpoints."
   value       = local.serverless_models
 }
+
 ===== FILE: apps/providers.tf =====
 terraform {
   required_version = ">= 1.7.0"
@@ -5339,6 +5516,18 @@ public enum RoutingOutcome
 
     /// <summary>Not routed. Even the cheapest viable tier exceeded the ceiling.</summary>
     Denied,
+
+    /// <summary>
+    /// Not routed. Governance policy left no eligible model.
+    ///
+    /// Deliberately distinct from <see cref="Denied"/>. "Too expensive" and "not permitted" are
+    /// different conversations with different people, and collapsing them would lose that.
+    ///
+    /// This is a successful, governed outcome carried on a 200 response, never an error status.
+    /// Modelling it as a failure would invite retry-on-error logic, and the one thing that must
+    /// never happen is a retry that finds an unapproved model.
+    /// </summary>
+    RefusedByPolicy,
 }
 
 ===== FILE: src/Fcmr.Router.Decisions/ComplexityScorer.cs =====
@@ -5407,6 +5596,13 @@ public sealed record TierCandidate
     public required ModelTier Tier { get; init; }
     public required string Deployment { get; init; }
     public required decimal ProjectedCostUsd { get; init; }
+
+    /// <summary>
+    /// Which vendor supplies this candidate. Present so the decision detail view can show that
+    /// several vendors competed for the same request without a second lookup.
+    /// </summary>
+    public ModelVendor Vendor { get; init; } = ModelVendor.AzureOpenAI;
+
     public bool Selected { get; init; }
     public string? RejectedReason { get; init; }
 }
@@ -5426,6 +5622,32 @@ public sealed record RoutingDecision
     /// implies an explanation exists when it does not.
     /// </summary>
     public required string Rationale { get; init; }
+
+    // ---- Governance, added by Feature 002 Slice A ----
+
+    /// <summary>Which policy set governed this decision.</summary>
+    public string? PolicySetId { get; init; }
+
+    /// <summary>
+    /// Pinned at decision time. Without it, replaying an audit record after a policy edit would
+    /// show a decision that appears to violate the policy in force, which is exactly the finding
+    /// an auditor escalates.
+    /// </summary>
+    public int? PolicySetVersion { get; init; }
+
+    /// <summary>Sensitivity the caller declared for this request. Never inferred, never defaulted.</summary>
+    public DataClassification? DataClassification { get; init; }
+
+    /// <summary>Vendor of the selected model. Null on any non-routed outcome.</summary>
+    public ModelVendor? SelectedVendor { get; init; }
+
+    /// <summary>
+    /// Every candidate governance removed, each with a reason.
+    ///
+    /// Persisted rather than merely computed for the response: "why was this model not used?"
+    /// is asked long after the request completes.
+    /// </summary>
+    public IReadOnlyList<PolicyExclusion> PolicyExclusions { get; init; } = [];
 }
 
 ===== FILE: src/Fcmr.Router.Decisions/TierSelector.cs =====
@@ -5451,11 +5673,16 @@ public sealed record TierPricing
 }
 
 /// <summary>
-/// Selects a model tier from a complexity score and an enforced cost ceiling.
+/// Selects a model from a complexity score and an enforced cost ceiling.
 ///
 /// The ceiling is a control, not a report. When the indicated tier exceeds it, the selector
 /// downgrades to the most capable affordable tier, and denies only when nothing is affordable.
 /// A denial is returned to the caller and surfaced in the UI; it is never silently absorbed.
+///
+/// The catalog is multi-vendor, so a tier holds several competing deployments. Selection is
+/// therefore tier-first then cheapest-within-tier, and candidates are identified by deployment
+/// rather than by tier. Identifying by tier alone would mark every same-tier competitor as the
+/// one that ran, and the scoreboard's cost attribution is only as honest as that identification.
 /// </summary>
 public static class TierSelector
 {
@@ -5472,7 +5699,7 @@ public static class TierSelector
         }
 
         var indicated = ComplexityScorer.IndicatedTier(complexityScore);
-        var available = pricing.Where(p => p.Available).OrderBy(p => p.Tier).ToList();
+        var available = pricing.Where(p => p.Available).ToList();
 
         if (available.Count == 0)
         {
@@ -5486,22 +5713,18 @@ public static class TierSelector
         {
             var cheapest = available.MinBy(p => p.CostPerRequestUsd)!;
             return Denied(complexityScore, costCeilingUsd, pricing,
-                $"Cheapest available tier {cheapest.Tier} projects {cheapest.CostPerRequestUsd:0.###} USD " +
+                $"Cheapest available model {cheapest.Deployment} projects {cheapest.CostPerRequestUsd:0.###} USD " +
                 $"against a ceiling of {costCeilingUsd:0.###} USD.");
         }
 
-        // Prefer the indicated tier. If it is unaffordable or unavailable, take the most capable
-        // tier that is both.
-        var chosen = affordable.FirstOrDefault(p => p.Tier == indicated)
-                     ?? affordable.MaxBy(p => p.Tier)!;
-
+        var chosen = Choose(affordable, indicated);
         var downgraded = chosen.Tier < indicated;
 
         var rationale = downgraded
             ? $"Complexity {complexityScore:0.##} indicated {indicated}, but its projected cost exceeds the " +
-              $"{costCeilingUsd:0.###} USD ceiling. Downgraded to {chosen.Tier} at " +
+              $"{costCeilingUsd:0.###} USD ceiling. Downgraded to {chosen.Tier} ({chosen.Deployment}) at " +
               $"{chosen.CostPerRequestUsd:0.###} USD."
-            : $"Complexity {complexityScore:0.##} indicated {chosen.Tier}, projected at " +
+            : $"Complexity {complexityScore:0.##} indicated {chosen.Tier}, served by {chosen.Deployment} at " +
               $"{chosen.CostPerRequestUsd:0.###} USD within the {costCeilingUsd:0.###} USD ceiling.";
 
         return new RoutingDecision
@@ -5511,9 +5734,42 @@ public static class TierSelector
             Outcome = downgraded ? RoutingOutcome.Downgraded : RoutingOutcome.Routed,
             SelectedTier = chosen.Tier,
             SelectedDeployment = chosen.Deployment,
+            SelectedVendor = chosen.Vendor,
             CandidateTiers = BuildCandidates(pricing, chosen, costCeilingUsd, indicated),
             Rationale = rationale,
         };
+    }
+
+    /// <summary>
+    /// Prefer the indicated tier. Failing that, the most capable tier below it. Failing that —
+    /// which happens only when the indicated tier is unavailable and nothing cheaper exists —
+    /// the cheapest tier above. Ties within a tier always break toward lower cost.
+    /// </summary>
+    private static TierPricing Choose(List<TierPricing> affordable, ModelTier indicated)
+    {
+        var atIndicated = affordable
+            .Where(p => p.Tier == indicated)
+            .OrderBy(p => p.CostPerRequestUsd)
+            .ThenBy(p => p.Deployment, StringComparer.Ordinal)
+            .FirstOrDefault();
+
+        if (atIndicated is not null)
+        {
+            return atIndicated;
+        }
+
+        var below = affordable
+            .Where(p => p.Tier < indicated)
+            .OrderByDescending(p => p.Tier)
+            .ThenBy(p => p.CostPerRequestUsd)
+            .ThenBy(p => p.Deployment, StringComparer.Ordinal)
+            .FirstOrDefault();
+
+        return below ?? affordable
+            .OrderBy(p => p.Tier)
+            .ThenBy(p => p.CostPerRequestUsd)
+            .ThenBy(p => p.Deployment, StringComparer.Ordinal)
+            .First();
     }
 
     private static RoutingDecision Denied(
@@ -5527,6 +5783,7 @@ public static class TierSelector
             Outcome = RoutingOutcome.Denied,
             SelectedTier = null,
             SelectedDeployment = null,
+            SelectedVendor = null,
             CandidateTiers = BuildCandidates(pricing, null, ceiling, null),
             Rationale = rationale,
         };
@@ -5539,20 +5796,33 @@ public static class TierSelector
     {
         var candidates = new List<TierCandidate>(pricing.Count);
 
-        foreach (var p in pricing.OrderBy(p => p.Tier))
+        var ordered = pricing
+            .OrderBy(p => p.Tier)
+            .ThenBy(p => p.CostPerRequestUsd)
+            .ThenBy(p => p.Deployment, StringComparer.Ordinal);
+
+        foreach (var p in ordered)
         {
-            var selected = chosen is not null && p.Tier == chosen.Tier;
+            // Identity is the deployment, not the tier. A multi-vendor catalog holds several
+            // models per tier and only one of them ran.
+            var selected = chosen is not null &&
+                           string.Equals(p.Deployment, chosen.Deployment, StringComparison.Ordinal);
 
             string? reason = null;
             if (!selected)
             {
                 if (!p.Available)
                 {
-                    reason = "Tier unavailable.";
+                    reason = "Model unavailable.";
                 }
                 else if (p.CostPerRequestUsd > ceiling)
                 {
                     reason = $"Projected {p.CostPerRequestUsd:0.###} USD exceeds the {ceiling:0.###} USD ceiling.";
+                }
+                else if (chosen is not null && p.Tier == chosen.Tier)
+                {
+                    reason = $"Same tier as the selected model at a higher projected cost " +
+                             $"({p.CostPerRequestUsd:0.###} against {chosen.CostPerRequestUsd:0.###} USD).";
                 }
                 else if (indicated is not null && p.Tier > indicated)
                 {
@@ -5569,6 +5839,7 @@ public static class TierSelector
                 Tier = p.Tier,
                 Deployment = p.Deployment,
                 ProjectedCostUsd = p.CostPerRequestUsd,
+                Vendor = p.Vendor,
                 Selected = selected,
                 RejectedReason = reason,
             });
@@ -5630,10 +5901,20 @@ namespace Fcmr.Router.Decisions;
 ///
 /// This is the object the demo mutates on stage: disabling a vendor here causes the exact same
 /// request, from an unchanged application, to produce a different execution plan.
+///
+/// Field names track contracts/policy-api.md deliberately. A governance object whose domain shape
+/// drifts from its published contract is one refactor away from an audit finding.
 /// </summary>
 public sealed record PolicySet
 {
-    public required string Name { get; init; }
+    /// <summary>Policy set identifier, for example CapitalMarkets-US.</summary>
+    public required string Id { get; init; }
+
+    /// <summary>Cosmos partition key. Governance is scoped per business unit.</summary>
+    public required string BusinessUnit { get; init; }
+
+    /// <summary>Shown in the policy screen.</summary>
+    public string DisplayName { get; init; } = string.Empty;
 
     /// <summary>Vendors permitted for this policy set. A vendor absent here is blocked.</summary>
     public required IReadOnlySet<ModelVendor> ApprovedVendors { get; init; }
@@ -5649,6 +5930,42 @@ public sealed record PolicySet
 
     /// <summary>Hard ceiling for this policy set, applied before any per-request ceiling.</summary>
     public decimal MaxCostPerRequestUsd { get; init; } = decimal.MaxValue;
+
+    /// <summary>
+    /// Declares that this set is expected to serve Restricted data. When true, an edit that leaves
+    /// no vendor able to process Restricted is rejected rather than accepted.
+    ///
+    /// Silently creating a policy set that refuses every restricted request is a configuration
+    /// accident, and it would surface as a demo failure rather than as a validation error.
+    /// </summary>
+    public bool PermitsRestrictedData { get; init; }
+
+    /// <summary>Incremented on every write. Pinned onto each decision at decision time.</summary>
+    public int Version { get; init; } = 1;
+
+    /// <summary>Entra object id of the approver who last changed this set.</summary>
+    public string? UpdatedBy { get; init; }
+
+    public DateTimeOffset? UpdatedAt { get; init; }
+}
+
+/// <summary>
+/// The category of a policy exclusion.
+///
+/// Kept separate from the prose reason because a cost-driven exclusion is a different
+/// conversation from a governance-driven one, and if every exclusion looks alike then a request
+/// refused purely on price is indistinguishable from one refused on principle. That is exactly
+/// the distinction contracts/router-api-policy-extension.md insists on preserving between
+/// Denied and RefusedByPolicy, and it would be lost inside the gate without this.
+/// </summary>
+public enum PolicyExclusionKind
+{
+    VendorNotApproved,
+    ClassificationExceeded,
+    RegionNotPermitted,
+
+    /// <summary>Excluded by the policy set's own cost ceiling, not by a governance rule.</summary>
+    PolicyCostCeiling,
 }
 
 /// <summary>Why a candidate was excluded, in language safe to show a governance audience.</summary>
@@ -5656,6 +5973,7 @@ public sealed record PolicyExclusion
 {
     public required string Deployment { get; init; }
     public required ModelVendor Vendor { get; init; }
+    public required PolicyExclusionKind Kind { get; init; }
     public required string Reason { get; init; }
 }
 
@@ -5663,7 +5981,10 @@ public sealed record PolicyEvaluation
 {
     public required IReadOnlyList<TierPricing> Eligible { get; init; }
     public required IReadOnlyList<PolicyExclusion> Excluded { get; init; }
-    public required string PolicySetName { get; init; }
+    public required string PolicySetId { get; init; }
+
+    /// <summary>Version in force when this evaluation ran. Pinned onto the decision record.</summary>
+    public required int PolicySetVersion { get; init; }
 
     /// <summary>True when policy left nothing to route to. The request is refused, not downgraded.</summary>
     public bool NoEligibleModels => Eligible.Count == 0;
@@ -5675,7 +5996,7 @@ public sealed record PolicyEvaluation
 /// Order matters and is deliberate: policy decides what is <em>permissible</em>, then the router
 /// decides what is <em>appropriate</em> among the permissible. Running these the other way round
 /// would let a cost optimisation reach for a model governance has not approved, which is exactly
-/// the failure mode the exchange exists to prevent.
+/// the failure mode the exchange exists to prevent. See RoutingPlanner, which owns the order.
 ///
 /// Every exclusion carries a reason. A governance audience will ask why a model was not used, and
 /// "policy" on its own is not an answer they will accept.
@@ -5704,16 +6025,12 @@ public static class PolicyGate
                 {
                     Deployment = c.Deployment,
                     Vendor = c.Vendor,
-                    Reason = $"Execution region '{executionRegion}' is not permitted by policy set '{policy.Name}'.",
+                    Kind = PolicyExclusionKind.RegionNotPermitted,
+                    Reason = $"Execution region '{executionRegion}' is not permitted by policy set '{policy.Id}'.",
                 });
             }
 
-            return new PolicyEvaluation
-            {
-                Eligible = eligible,
-                Excluded = excluded,
-                PolicySetName = policy.Name,
-            };
+            return Result(eligible, excluded, policy);
         }
 
         foreach (var candidate in catalog)
@@ -5724,7 +6041,8 @@ public static class PolicyGate
                 {
                     Deployment = candidate.Deployment,
                     Vendor = candidate.Vendor,
-                    Reason = $"Vendor {candidate.Vendor} is not approved under policy set '{policy.Name}'.",
+                    Kind = PolicyExclusionKind.VendorNotApproved,
+                    Reason = $"Vendor {candidate.Vendor} is not approved under policy set '{policy.Id}'.",
                 });
                 continue;
             }
@@ -5736,6 +6054,7 @@ public static class PolicyGate
                 {
                     Deployment = candidate.Deployment,
                     Vendor = candidate.Vendor,
+                    Kind = PolicyExclusionKind.ClassificationExceeded,
                     Reason = $"Data classification {classification} exceeds the maximum permitted for vendor {candidate.Vendor}.",
                 });
                 continue;
@@ -5747,6 +6066,7 @@ public static class PolicyGate
                 {
                     Deployment = candidate.Deployment,
                     Vendor = candidate.Vendor,
+                    Kind = PolicyExclusionKind.PolicyCostCeiling,
                     Reason = $"Projected {candidate.CostPerRequestUsd:0.###} USD exceeds the policy ceiling of {policy.MaxCostPerRequestUsd:0.###} USD.",
                 });
                 continue;
@@ -5755,14 +6075,21 @@ public static class PolicyGate
             eligible.Add(candidate);
         }
 
-        return new PolicyEvaluation
+        return Result(eligible, excluded, policy);
+    }
+
+    private static PolicyEvaluation Result(
+        IReadOnlyList<TierPricing> eligible,
+        IReadOnlyList<PolicyExclusion> excluded,
+        PolicySet policy) => new()
         {
             Eligible = eligible,
             Excluded = excluded,
-            PolicySetName = policy.Name,
+            PolicySetId = policy.Id,
+            PolicySetVersion = policy.Version,
         };
-    }
 }
+
 ===== FILE: tests/Fcmr.Router.Decisions.Tests/Fcmr.Router.Decisions.Tests.csproj =====
 <Project Sdk="Microsoft.NET.Sdk">
 
@@ -6161,20 +6488,30 @@ already on screen.
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@azure/msal-browser": "^3.28.1",
     "@azure/msal-react": "^2.2.0",
+    "@tanstack/react-query": "^5.62.11",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.1"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "eslint": "^9.17.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.4",
+    "globals": "^17.11.0",
+    "jsdom": "^25.0.1",
     "typescript": "^5.7.2",
+    "typescript-eslint": "^8.67.0",
     "vite": "^6.0.5",
     "vitest": "^2.1.8"
   }
@@ -6336,7 +6673,9 @@ public class PolicyGateTests
 
     private static PolicySet CapitalMarkets(params ModelVendor[] approved) => new()
     {
-        Name = "CapitalMarkets-US",
+        Id = "CapitalMarkets-US",
+        BusinessUnit = "CapitalMarkets",
+        DisplayName = "Capital Markets — US",
         ApprovedVendors = approved.Length > 0
             ? new HashSet<ModelVendor>(approved)
             : new HashSet<ModelVendor>
@@ -6440,18 +6779,6098 @@ public class PolicyGateTests
     }
 
     [Fact]
-    public void Evaluate_ComposesWithTierSelector_SoPolicyDecidesBeforeCost()
+    public void Evaluate_CarriesThePolicySetIdentityAndVersionForPinning()
     {
-        // Policy decides what is permissible; the router decides what is appropriate among the
-        // permissible. Reversing the order would let a cost optimisation reach an unapproved model.
-        var policy = CapitalMarkets(ModelVendor.AzureOpenAI, ModelVendor.OpenWeight);
+        var policy = CapitalMarkets() with { Version = 7 };
 
-        var evaluation = PolicyGate.Evaluate(Catalog(), policy, DataClassification.Internal);
-        var decision = TierSelector.Select(0.50, 1.00m, evaluation.Eligible);
+        var result = PolicyGate.Evaluate(Catalog(), policy, DataClassification.Internal);
 
-        decision.Outcome.Should().NotBe(RoutingOutcome.Denied);
-        evaluation.Eligible.Should().OnlyContain(c =>
-            c.Vendor == ModelVendor.AzureOpenAI || c.Vendor == ModelVendor.OpenWeight);
+        result.PolicySetId.Should().Be("CapitalMarkets-US");
+        result.PolicySetVersion.Should().Be(7,
+            "the version in force is pinned onto the decision so a later edit cannot rewrite history");
     }
 }
+
+===== FILE: scripts/generate-api-types.mjs =====
+#!/usr/bin/env node
+// Generates TypeScript types for the web UI from the C# decision library.
+//
+// The UI's types are generated rather than hand-written because hand-written types drift, and
+// drift surfaces on stage. Fcmr.Router.Decisions is the single source of truth for the decision
+// record and its enumerations, so the types are derived from the C# rather than inferred from the
+// JSON examples in contracts/ -- inference from an example cannot tell an optional field from one
+// that merely happened to be null in the sample.
+//
+// Usage:
+//   node scripts/generate-api-types.mjs            write src/webui/src/api/types.generated.ts
+//   node scripts/generate-api-types.mjs --check    exit 1 if the file is stale (CI gate)
+
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const sourceDir = join(repoRoot, 'src', 'Fcmr.Router.Decisions');
+const outputPath = join(repoRoot, 'src', 'webui', 'src', 'api', 'types.generated.ts');
+
+// Records whose shape is part of the HTTP surface. Anything not listed here stays server-side;
+// exporting the whole assembly would leak internal types into the client contract.
+const EXPORTED_RECORDS = [
+  'RoutingDecision',
+  'TierCandidate',
+  'PolicyExclusion',
+  'PolicySet',
+  'PolicySetFieldChange',
+];
+
+const EXPORTED_ENUMS = [
+  'ModelTier',
+  'RoutingOutcome',
+  'ModelVendor',
+  'ServingMode',
+  'DataClassification',
+  'PolicyExclusionKind',
+];
+
+const PRIMITIVES = {
+  string: 'string',
+  int: 'number',
+  double: 'number',
+  decimal: 'number',
+  bool: 'boolean',
+  DateTimeOffset: 'string',
+};
+
+function readSources() {
+  return readdirSync(sourceDir)
+    .filter((f) => f.endsWith('.cs'))
+    .map((f) => readFileSync(join(sourceDir, f), 'utf8'))
+    .join('\n');
+}
+
+function stripComments(src) {
+  return src
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('//'))
+    .join('\n');
+}
+
+function parseEnums(src) {
+  const enums = new Map();
+  const re = /public enum (\w+)\s*\{([^}]*)\}/g;
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    const [, name, body] = m;
+    const members = body
+      .split(',')
+      .map((v) => v.trim().split('=')[0].trim())
+      .filter((v) => v.length > 0 && /^\w+$/.test(v));
+    enums.set(name, members);
+  }
+  return enums;
+}
+
+function parseRecords(src) {
+  const records = new Map();
+  // Records here are simple property bags; the body is matched up to the first closing brace at
+  // column 0, which holds because the assembly deliberately contains no nested types.
+  const re = /public sealed record (\w+)\s*\{([\s\S]*?)\n\}/g;
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    const [, name, body] = m;
+    const props = [];
+    const propRe = /public (required )?([\w<>,.?\s]+?)\s+(\w+)\s*\{\s*get;/g;
+    let p;
+    while ((p = propRe.exec(body)) !== null) {
+      const [, required, rawType, propName] = p;
+      props.push({ name: propName, required: Boolean(required), csharpType: rawType.trim() });
+    }
+    records.set(name, props);
+  }
+  return records;
+}
+
+function mapType(csharpType, enums) {
+  let type = csharpType.trim();
+  let nullable = false;
+
+  if (type.endsWith('?')) {
+    nullable = true;
+    type = type.slice(0, -1).trim();
+  }
+
+  let ts;
+  const list = type.match(/^IReadOnlyList<(.+)>$/) || type.match(/^IReadOnlySet<(.+)>$/);
+  const dict = type.match(/^IReadOnlyDictionary<(.+?),\s*(.+)>$/);
+
+  if (list) {
+    ts = `${mapType(list[1], enums).ts}[]`;
+  } else if (dict) {
+    const key = mapType(dict[1], enums).ts;
+    const value = mapType(dict[2], enums).ts;
+    ts = `Partial<Record<${key}, ${value}>>`;
+  } else if (PRIMITIVES[type]) {
+    ts = PRIMITIVES[type];
+  } else if (enums.has(type)) {
+    ts = type;
+  } else {
+    ts = type;
+  }
+
+  return { ts, nullable };
+}
+
+function camel(name) {
+  return name.charAt(0).toLowerCase() + name.slice(1);
+}
+
+function generate() {
+  const src = stripComments(readSources());
+  const enums = parseEnums(src);
+  const records = parseRecords(src);
+
+  const missingEnums = EXPORTED_ENUMS.filter((e) => !enums.has(e));
+  const missingRecords = EXPORTED_RECORDS.filter((r) => !records.has(r));
+  if (missingEnums.length || missingRecords.length) {
+    throw new Error(
+      `Expected types were not found in the C# source: ${[...missingEnums, ...missingRecords].join(', ')}. ` +
+        'Either the type was renamed or the parser needs updating.',
+    );
+  }
+
+  const lines = [];
+  lines.push('// GENERATED FILE -- DO NOT EDIT.');
+  lines.push('//');
+  lines.push('// Source: src/Fcmr.Router.Decisions/*.cs');
+  lines.push('// Regenerate: node scripts/generate-api-types.mjs');
+  lines.push('// CI asserts this file is in sync via: node scripts/generate-api-types.mjs --check');
+  lines.push('');
+
+  for (const name of EXPORTED_ENUMS) {
+    const members = enums.get(name);
+    lines.push(`export type ${name} =`);
+    lines.push(members.map((v) => `  | '${v}'`).join('\n') + ';');
+    lines.push('');
+    lines.push(`export const ${name}Values: readonly ${name}[] = [`);
+    lines.push(members.map((v) => `  '${v}',`).join('\n'));
+    lines.push('] as const;');
+    lines.push('');
+  }
+
+  for (const name of EXPORTED_RECORDS) {
+    lines.push(`export interface ${name} {`);
+    for (const prop of records.get(name)) {
+      const { ts, nullable } = mapType(prop.csharpType, enums);
+      // A nullable C# property becomes an optional TypeScript property that may also be null:
+      // the wire format carries an explicit null, and collapsing that to `undefined` would hide
+      // the difference between "refused, so no vendor" and "field absent".
+      const optional = nullable || !prop.required;
+      lines.push(`  ${camel(prop.name)}${optional ? '?' : ''}: ${ts}${nullable ? ' | null' : ''};`);
+    }
+    lines.push('}');
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+function main() {
+  const check = process.argv.includes('--check');
+  const generated = generate();
+
+  if (check) {
+    if (!existsSync(outputPath)) {
+      console.error('FAIL: types.generated.ts is missing. Run: node scripts/generate-api-types.mjs');
+      process.exit(1);
+    }
+    const current = readFileSync(outputPath, 'utf8');
+    if (current !== generated) {
+      console.error('FAIL: types.generated.ts is stale relative to the C# source.');
+      console.error('Run: node scripts/generate-api-types.mjs');
+      process.exit(1);
+    }
+    console.log('PASS: generated API types are in sync with the C# source.');
+    return;
+  }
+
+  mkdirSync(dirname(outputPath), { recursive: true });
+  writeFileSync(outputPath, generated, 'utf8');
+  console.log(`Wrote ${outputPath}`);
+}
+
+main();
+
+===== FILE: src/Fcmr.Router.Decisions/RoutingPlanner.cs =====
+namespace Fcmr.Router.Decisions;
+
+/// <summary>
+/// Everything the exchange needs to plan a request.
+///
+/// Note what is absent: there is no model, vendor, deployment, or tier field, and there will not
+/// be one. Principle IV is enforced by this type's shape, because a field that exists is a field
+/// that eventually gets used.
+/// </summary>
+public sealed record RoutingRequest
+{
+    public required ComplexityHints Hints { get; init; }
+
+    /// <summary>Per-request cost ceiling. The policy ceiling still applies on top of it.</summary>
+    public required decimal CostCeilingUsd { get; init; }
+
+    /// <summary>
+    /// What the data <em>is</em>, stated by the caller. Required, never defaulted.
+    ///
+    /// Defaulting an omitted classification to Public is how restricted data reaches a vendor that
+    /// should not see it, so the contract makes omission a 400 rather than an assumption.
+    /// </summary>
+    public required DataClassification DataClassification { get; init; }
+
+    /// <summary>Region execution would occur in, when the policy set constrains regions.</summary>
+    public string? ExecutionRegion { get; init; }
+}
+
+/// <summary>
+/// The single entry point for routing, and the one place the evaluation order is decided.
+///
+/// <code>
+/// catalog -&gt; PolicyGate.Evaluate() -&gt; eligible -&gt; TierSelector.Select() -&gt; decision
+/// </code>
+///
+/// Governance runs first and unconditionally. Cost and complexity then choose among what
+/// governance permitted, and never see the models it removed. Reversing the two would let a cost
+/// optimisation reach a model governance has not approved — the precise failure the exchange
+/// exists to prevent — so the order is asserted by test rather than left to code reading.
+///
+/// Callers route through here. Calling TierSelector directly bypasses the gate.
+/// </summary>
+public static class RoutingPlanner
+{
+    public static RoutingDecision Plan(
+        RoutingRequest request,
+        IReadOnlyList<TierPricing> catalog,
+        PolicySet policy)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(catalog);
+        ArgumentNullException.ThrowIfNull(policy);
+
+        if (catalog.Count == 0)
+        {
+            throw new ArgumentException("At least one catalog entry must be supplied.", nameof(catalog));
+        }
+
+        var score = ComplexityScorer.Score(request.Hints);
+
+        // Stage 1 — governance. Always first.
+        var evaluation = PolicyGate.Evaluate(
+            catalog, policy, request.DataClassification, request.ExecutionRegion);
+
+        if (evaluation.NoEligibleModels)
+        {
+            return Refused(score, request, evaluation, catalog);
+        }
+
+        // Stage 2 — economics, over the permitted subset only. The excluded models are not in
+        // scope here, which is what makes the ordering structural rather than conventional.
+        var effectiveCeiling = Math.Min(request.CostCeilingUsd, policy.MaxCostPerRequestUsd);
+        var decision = TierSelector.Select(score, effectiveCeiling, evaluation.Eligible);
+
+        return decision with
+        {
+            PolicySetId = evaluation.PolicySetId,
+            PolicySetVersion = evaluation.PolicySetVersion,
+            DataClassification = request.DataClassification,
+            PolicyExclusions = evaluation.Excluded,
+        };
+    }
+
+    private static RoutingDecision Refused(
+        double score,
+        RoutingRequest request,
+        PolicyEvaluation evaluation,
+        IReadOnlyList<TierPricing> catalog)
+    {
+        // Name the vendors rather than the count. "Refused by policy" is not an answer a
+        // governance audience accepts, and the presenter reads this sentence aloud.
+        var vendors = evaluation.Excluded
+            .Select(e => e.Vendor)
+            .Distinct()
+            .OrderBy(v => v.ToString(), StringComparer.Ordinal)
+            .ToList();
+
+        // A refusal where every exclusion was a price decision is a cost outcome wearing a
+        // governance label. Saying so keeps "too expensive" and "not permitted" apart even when
+        // both arrive as RefusedByPolicy, which is the distinction the contract exists to protect.
+        var allCostDriven = evaluation.Excluded.Count > 0 &&
+                            evaluation.Excluded.All(e => e.Kind == PolicyExclusionKind.PolicyCostCeiling);
+
+        var cause = allCostDriven
+            ? "every candidate exceeded the policy cost ceiling, so this is a cost outcome rather than a governance one"
+            : $"they were excluded on governance grounds for {request.DataClassification} data";
+
+        var rationale =
+            $"Policy set '{evaluation.PolicySetId}' version {evaluation.PolicySetVersion} left no eligible " +
+            $"model. All {evaluation.Excluded.Count} candidate(s) across {vendors.Count} vendor(s) " +
+            $"({string.Join(", ", vendors)}) were ruled out: {cause}. " +
+            "The request was refused, not downgraded.";
+
+        return new RoutingDecision
+        {
+            ComplexityScore = score,
+            CostCeilingUsd = request.CostCeilingUsd,
+            Outcome = RoutingOutcome.RefusedByPolicy,
+            SelectedTier = null,
+            SelectedDeployment = null,
+            SelectedVendor = null,
+            CandidateTiers = catalog
+                .OrderBy(p => p.Tier)
+                .ThenBy(p => p.CostPerRequestUsd)
+                .ThenBy(p => p.Deployment, StringComparer.Ordinal)
+                .Select(p => new TierCandidate
+                {
+                    Tier = p.Tier,
+                    Deployment = p.Deployment,
+                    ProjectedCostUsd = p.CostPerRequestUsd,
+                    Vendor = p.Vendor,
+                    Selected = false,
+                    RejectedReason = evaluation.Excluded
+                        .FirstOrDefault(e => string.Equals(e.Deployment, p.Deployment, StringComparison.Ordinal))
+                        ?.Reason ?? "Excluded by governance policy.",
+                })
+                .ToList(),
+            Rationale = rationale,
+            PolicySetId = evaluation.PolicySetId,
+            PolicySetVersion = evaluation.PolicySetVersion,
+            DataClassification = request.DataClassification,
+            PolicyExclusions = evaluation.Excluded,
+        };
+    }
+}
+
+===== FILE: src/Fcmr.Router.Decisions/PolicySetValidation.cs =====
+namespace Fcmr.Router.Decisions;
+
+/// <summary>
+/// Why a proposed policy change was rejected.
+///
+/// The transport status lives alongside the reason on purpose. contracts/policy-api.md draws a
+/// deliberate line between 400 (the change is malformed) and 422 (the change is well-formed but
+/// would create a policy set that refuses work it is declared to permit). Keeping the mapping
+/// here means the distinction cannot quietly drift away from the published contract.
+/// </summary>
+public enum PolicyValidationFailure
+{
+    /// <summary>maxClassification names a vendor that is not in approvedVendors. 400.</summary>
+    ClassificationNamesUnapprovedVendor,
+
+    /// <summary>An approved vendor has no maxClassification entry, so it could never be selected. 400.</summary>
+    ApprovedVendorHasNoClassification,
+
+    /// <summary>
+    /// The set is declared to permit Restricted data, but no approved vendor may process it. 422.
+    ///
+    /// Accepting this silently produces a policy set that refuses every restricted request, which
+    /// surfaces as a demo failure rather than as a validation error.
+    /// </summary>
+    RestrictedDataUnservable,
+}
+
+public sealed record PolicyValidationError
+{
+    public required PolicyValidationFailure Failure { get; init; }
+    public required string Message { get; init; }
+
+    /// <summary>HTTP status the API layer must return for this failure.</summary>
+    public int StatusCode => Failure switch
+    {
+        PolicyValidationFailure.RestrictedDataUnservable => 422,
+        _ => 400,
+    };
+}
+
+public sealed class PolicySetValidationException(PolicyValidationError error)
+    : InvalidOperationException(error.Message)
+{
+    public PolicyValidationError Error { get; } = error;
+}
+
+/// <summary>Raised when a write presents a stale expectedVersion. Maps to 409.</summary>
+public sealed class PolicySetConcurrencyException(string id, int expectedVersion, int actualVersion)
+    : InvalidOperationException(
+        $"Policy set '{id}' is at version {actualVersion}; the change expected version {expectedVersion}. " +
+        "The change was rejected rather than merged.")
+{
+    public string PolicySetId { get; } = id;
+    public int ExpectedVersion { get; } = expectedVersion;
+    public int ActualVersion { get; } = actualVersion;
+}
+
+public sealed class PolicySetNotFoundException(string id)
+    : InvalidOperationException($"Policy set '{id}' was not found.")
+{
+    public string PolicySetId { get; } = id;
+}
+
+public static class PolicySetValidator
+{
+    /// <summary>
+    /// Validates a fully-resolved policy set. Throws on the first failure rather than collecting,
+    /// because the API surfaces one status code and a compound status would be a lie.
+    /// </summary>
+    public static void Validate(PolicySet candidate)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+
+        foreach (var vendor in candidate.MaxClassification.Keys)
+        {
+            if (!candidate.ApprovedVendors.Contains(vendor))
+            {
+                throw new PolicySetValidationException(new PolicyValidationError
+                {
+                    Failure = PolicyValidationFailure.ClassificationNamesUnapprovedVendor,
+                    Message =
+                        $"maxClassification names vendor {vendor}, which is not in approvedVendors. " +
+                        "A classification limit for an unapproved vendor has no effect and hides intent.",
+                });
+            }
+        }
+
+        foreach (var vendor in candidate.ApprovedVendors)
+        {
+            if (!candidate.MaxClassification.ContainsKey(vendor))
+            {
+                throw new PolicySetValidationException(new PolicyValidationError
+                {
+                    Failure = PolicyValidationFailure.ApprovedVendorHasNoClassification,
+                    Message =
+                        $"Vendor {vendor} is approved but has no maxClassification entry, so the gate would " +
+                        "exclude it from every request. Approving a vendor that can never be selected is " +
+                        "almost certainly not what the approver meant.",
+                });
+            }
+        }
+
+        if (candidate.PermitsRestrictedData && !CanServeRestricted(candidate))
+        {
+            throw new PolicySetValidationException(new PolicyValidationError
+            {
+                Failure = PolicyValidationFailure.RestrictedDataUnservable,
+                Message =
+                    $"Policy set '{candidate.Id}' is declared to permit Restricted data, but no approved " +
+                    "vendor may process it. Every restricted request would be refused.",
+            });
+        }
+    }
+
+    public static bool CanServeRestricted(PolicySet candidate)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+
+        return candidate.ApprovedVendors.Any(v =>
+            candidate.MaxClassification.TryGetValue(v, out var max) &&
+            max >= DataClassification.Restricted);
+    }
+}
+
+===== FILE: src/Fcmr.Router.Decisions/PolicySetRepository.cs =====
+namespace Fcmr.Router.Decisions;
+
+/// <summary>One field an approver changed, rendered for the diff and the audit event.</summary>
+public sealed record PolicySetFieldChange
+{
+    public required string Field { get; init; }
+    public required string From { get; init; }
+    public required string To { get; init; }
+}
+
+/// <summary>
+/// A partial update. Null means "not supplied", which is distinct from "set to empty" —
+/// conflating the two would let an omitted field silently clear a governance control.
+/// </summary>
+public sealed record PolicySetUpdate
+{
+    public required string Id { get; init; }
+    public required string BusinessUnit { get; init; }
+
+    /// <summary>Required. A mismatch is a 409 and is never merged.</summary>
+    public required int ExpectedVersion { get; init; }
+
+    /// <summary>Entra object id of the approver. Recorded on the set and on the audit event.</summary>
+    public required string UpdatedBy { get; init; }
+
+    public IReadOnlySet<ModelVendor>? ApprovedVendors { get; init; }
+    public IReadOnlyDictionary<ModelVendor, DataClassification>? MaxClassification { get; init; }
+    public IReadOnlySet<string>? AllowedRegions { get; init; }
+    public decimal? MaxCostPerRequestUsd { get; init; }
+    public bool? PermitsRestrictedData { get; init; }
+}
+
+/// <summary>The result of an accepted change: the new state plus what actually changed.</summary>
+public sealed record PolicySetChangeResult
+{
+    public required PolicySet PolicySet { get; init; }
+    public required IReadOnlyList<PolicySetFieldChange> Changed { get; init; }
+    public required DateTimeOffset EffectiveFrom { get; init; }
+}
+
+public interface IPolicySetRepository
+{
+    Task<IReadOnlyList<PolicySet>> ListAsync(string businessUnit, CancellationToken ct = default);
+
+    Task<PolicySet?> GetAsync(string businessUnit, string id, CancellationToken ct = default);
+
+    Task<PolicySetChangeResult> UpdateAsync(PolicySetUpdate update, CancellationToken ct = default);
+
+    /// <summary>Most recent first. Backs the claim that the control's own changes are auditable.</summary>
+    Task<IReadOnlyList<PolicySetChangeResult>> HistoryAsync(
+        string businessUnit, string id, int take = 20, CancellationToken ct = default);
+}
+
+/// <summary>
+/// In-memory policy set store with the same optimistic-concurrency semantics as the Cosmos
+/// implementation that will replace it.
+///
+/// This exists so the policy engine, its validation rules, and its concurrency behaviour can be
+/// built and proven before any Azure resource exists. The Cosmos version substitutes
+/// <c>version</c> for an ETag precondition; the observable contract — stale writes are rejected,
+/// never merged — is identical, which is what makes this a fair stand-in rather than a mock that
+/// flatters the design.
+/// </summary>
+public sealed class InMemoryPolicySetRepository : IPolicySetRepository
+{
+    private readonly Lock _gate = new();
+    private readonly Dictionary<string, PolicySet> _sets = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<PolicySetChangeResult>> _history = new(StringComparer.Ordinal);
+    private readonly TimeProvider _time;
+
+    public InMemoryPolicySetRepository(IEnumerable<PolicySet>? seed = null, TimeProvider? timeProvider = null)
+    {
+        _time = timeProvider ?? TimeProvider.System;
+
+        foreach (var set in seed ?? [])
+        {
+            // Seeded sets are validated on the way in. A baseline that could not have been
+            // written through the API is a baseline that will surprise someone later.
+            PolicySetValidator.Validate(set);
+            _sets[Key(set.BusinessUnit, set.Id)] = set;
+        }
+    }
+
+    public Task<IReadOnlyList<PolicySet>> ListAsync(string businessUnit, CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            IReadOnlyList<PolicySet> result = _sets.Values
+                .Where(s => string.Equals(s.BusinessUnit, businessUnit, StringComparison.Ordinal))
+                .OrderBy(s => s.Id, StringComparer.Ordinal)
+                .ToList();
+
+            return Task.FromResult(result);
+        }
+    }
+
+    public Task<PolicySet?> GetAsync(string businessUnit, string id, CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            _sets.TryGetValue(Key(businessUnit, id), out var set);
+            return Task.FromResult(set);
+        }
+    }
+
+    public Task<PolicySetChangeResult> UpdateAsync(PolicySetUpdate update, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(update);
+
+        lock (_gate)
+        {
+            var key = Key(update.BusinessUnit, update.Id);
+
+            if (!_sets.TryGetValue(key, out var current))
+            {
+                throw new PolicySetNotFoundException(update.Id);
+            }
+
+            // Concurrency before validation: a stale write is rejected on the grounds that the
+            // approver was not looking at the current state, regardless of what they proposed.
+            if (current.Version != update.ExpectedVersion)
+            {
+                throw new PolicySetConcurrencyException(update.Id, update.ExpectedVersion, current.Version);
+            }
+
+            var now = _time.GetUtcNow();
+
+            var proposed = current with
+            {
+                ApprovedVendors = update.ApprovedVendors ?? current.ApprovedVendors,
+                MaxClassification = update.MaxClassification ?? current.MaxClassification,
+                AllowedRegions = update.AllowedRegions ?? current.AllowedRegions,
+                MaxCostPerRequestUsd = update.MaxCostPerRequestUsd ?? current.MaxCostPerRequestUsd,
+                PermitsRestrictedData = update.PermitsRestrictedData ?? current.PermitsRestrictedData,
+                Version = current.Version + 1,
+                UpdatedBy = update.UpdatedBy,
+                UpdatedAt = now,
+            };
+
+            PolicySetValidator.Validate(proposed);
+
+            var changed = Diff(current, proposed);
+
+            // A change that changes nothing still burns a version. The alternative is that two
+            // approvers can hold the same expectedVersion and both believe they wrote last.
+            var result = new PolicySetChangeResult
+            {
+                PolicySet = proposed,
+                Changed = changed,
+                EffectiveFrom = now,
+            };
+
+            _sets[key] = proposed;
+
+            if (!_history.TryGetValue(key, out var log))
+            {
+                log = [];
+                _history[key] = log;
+            }
+
+            log.Add(result);
+
+            return Task.FromResult(result);
+        }
+    }
+
+    public Task<IReadOnlyList<PolicySetChangeResult>> HistoryAsync(
+        string businessUnit, string id, int take = 20, CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            IReadOnlyList<PolicySetChangeResult> result =
+                _history.TryGetValue(Key(businessUnit, id), out var log)
+                    ? log.AsEnumerable().Reverse().Take(take).ToList()
+                    : [];
+
+            return Task.FromResult(result);
+        }
+    }
+
+    /// <summary>
+    /// Before-and-after for every field that moved. Returned to the UI so the policy screen can
+    /// show exactly what the approver did without a second fetch, and written verbatim onto the
+    /// PolicySetChanged audit event.
+    /// </summary>
+    public static IReadOnlyList<PolicySetFieldChange> Diff(PolicySet before, PolicySet after)
+    {
+        ArgumentNullException.ThrowIfNull(before);
+        ArgumentNullException.ThrowIfNull(after);
+
+        var changes = new List<PolicySetFieldChange>();
+
+        var beforeVendors = RenderVendors(before.ApprovedVendors);
+        var afterVendors = RenderVendors(after.ApprovedVendors);
+        if (!string.Equals(beforeVendors, afterVendors, StringComparison.Ordinal))
+        {
+            changes.Add(new PolicySetFieldChange
+            {
+                Field = "approvedVendors",
+                From = beforeVendors,
+                To = afterVendors,
+            });
+        }
+
+        var beforeClass = RenderClassifications(before.MaxClassification);
+        var afterClass = RenderClassifications(after.MaxClassification);
+        if (!string.Equals(beforeClass, afterClass, StringComparison.Ordinal))
+        {
+            changes.Add(new PolicySetFieldChange
+            {
+                Field = "maxClassification",
+                From = beforeClass,
+                To = afterClass,
+            });
+        }
+
+        var beforeRegions = RenderRegions(before.AllowedRegions);
+        var afterRegions = RenderRegions(after.AllowedRegions);
+        if (!string.Equals(beforeRegions, afterRegions, StringComparison.Ordinal))
+        {
+            changes.Add(new PolicySetFieldChange
+            {
+                Field = "allowedRegions",
+                From = beforeRegions,
+                To = afterRegions,
+            });
+        }
+
+        if (before.MaxCostPerRequestUsd != after.MaxCostPerRequestUsd)
+        {
+            changes.Add(new PolicySetFieldChange
+            {
+                Field = "maxCostPerRequestUsd",
+                From = before.MaxCostPerRequestUsd.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture),
+                To = after.MaxCostPerRequestUsd.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture),
+            });
+        }
+
+        if (before.PermitsRestrictedData != after.PermitsRestrictedData)
+        {
+            changes.Add(new PolicySetFieldChange
+            {
+                Field = "permitsRestrictedData",
+                From = before.PermitsRestrictedData.ToString(),
+                To = after.PermitsRestrictedData.ToString(),
+            });
+        }
+
+        return changes;
+    }
+
+    private static string RenderVendors(IReadOnlySet<ModelVendor> vendors) =>
+        string.Join(", ", vendors.Select(v => v.ToString()).OrderBy(v => v, StringComparer.Ordinal));
+
+    private static string RenderRegions(IReadOnlySet<string> regions) =>
+        string.Join(", ", regions.OrderBy(r => r, StringComparer.Ordinal));
+
+    private static string RenderClassifications(IReadOnlyDictionary<ModelVendor, DataClassification> map) =>
+        string.Join(", ", map
+            .OrderBy(kv => kv.Key.ToString(), StringComparer.Ordinal)
+            .Select(kv => $"{kv.Key}={kv.Value}"));
+
+    private static string Key(string businessUnit, string id) => $"{businessUnit}/{id}";
+}
+
+===== FILE: src/Fcmr.Demo.Data/Fcmr.Demo.Data.csproj =====
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Fcmr.Demo.Data</RootNamespace>
+    <AssemblyName>Fcmr.Demo.Data</AssemblyName>
+  </PropertyGroup>
+
+  <!--
+    Dependency-free on purpose, like Fcmr.Router.Decisions. The demo fixtures must be generable
+    with no Azure resource, no network, and no SDK, because the no-Azure fallback path depends on
+    producing the same corpus offline that the cloud path ingests.
+  -->
+
+</Project>
+
+===== FILE: src/Fcmr.Demo.Data/DeterministicRandom.cs =====
+namespace Fcmr.Demo.Data;
+
+/// <summary>
+/// A small xorshift generator with an explicit, stable algorithm.
+///
+/// System.Random is deliberately not used. Its sequence for a given seed is an implementation
+/// detail that has changed between .NET versions, so a corpus generated on one machine would not
+/// match one generated on another. The demo claims reproducibility out loud — the surveillance
+/// ranking is shown twice and asserted to be identical — so the generator underneath it has to be
+/// stable across runtimes, not merely stable within one.
+/// </summary>
+public sealed class DeterministicRandom
+{
+    private ulong _state;
+
+    public DeterministicRandom(ulong seed)
+    {
+        // A zero state is absorbing for xorshift, so displace it to a fixed non-zero constant.
+        _state = seed == 0 ? 0x9E3779B97F4A7C15UL : seed;
+    }
+
+    public ulong NextUInt64()
+    {
+        var x = _state;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        _state = x;
+        return unchecked(x * 0x2545F4914F6CDD1DUL);
+    }
+
+    /// <summary>Uniform in [0, maxExclusive).</summary>
+    public int Next(int maxExclusive)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxExclusive);
+        return (int)(NextUInt64() % (ulong)maxExclusive);
+    }
+
+    /// <summary>Uniform in [minInclusive, maxExclusive).</summary>
+    public int Next(int minInclusive, int maxExclusive)
+    {
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(minInclusive, maxExclusive);
+        return minInclusive + Next(maxExclusive - minInclusive);
+    }
+
+    /// <summary>Uniform in [0.0, 1.0).</summary>
+    public double NextDouble() => (NextUInt64() >> 11) * (1.0 / 9007199254740992.0);
+
+    public bool NextBool(double probability) => NextDouble() < probability;
+
+    public T Pick<T>(IReadOnlyList<T> items)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+        ArgumentOutOfRangeException.ThrowIfZero(items.Count);
+        return items[Next(items.Count)];
+    }
+
+    /// <summary>Rounded to four places so the value survives a JSON round trip unchanged.</summary>
+    public decimal NextDecimal(decimal minInclusive, decimal maxExclusive) =>
+        Math.Round(minInclusive + ((decimal)NextDouble() * (maxExclusive - minInclusive)), 4);
+
+    /// <summary>
+    /// A derived generator for one independent stream.
+    ///
+    /// Each generator draws from its own stream so that changing the number of research documents
+    /// cannot shift the communications or the alerts. Without this, adding one document silently
+    /// rewrites every downstream fixture and the rehearsed demo stops matching.
+    /// </summary>
+    public static DeterministicRandom ForStream(ulong seed, string streamName)
+    {
+        ArgumentNullException.ThrowIfNull(streamName);
+
+        // FNV-1a over the stream name, mixed with the master seed.
+        var hash = 14695981039346656037UL;
+        foreach (var ch in streamName)
+        {
+            hash ^= ch;
+            hash = unchecked(hash * 1099511628211UL);
+        }
+
+        return new DeterministicRandom(unchecked(seed ^ hash));
+    }
+}
+
+===== FILE: src/Fcmr.Demo.Data/DemoRecords.cs =====
+namespace Fcmr.Demo.Data;
+
+public enum OrderSide
+{
+    Buy,
+    Sell,
+}
+
+public enum CommunicationChannel
+{
+    Chat,
+    Email,
+    VoiceTranscript,
+}
+
+/// <summary>A source document in the research corpus, chunked ready for indexing.</summary>
+public sealed record ResearchDocument
+{
+    public required string Id { get; init; }
+    public required string Title { get; init; }
+    public required string Source { get; init; }
+    public required string Symbol { get; init; }
+    public required DateTimeOffset PublishedAt { get; init; }
+    public required IReadOnlyList<ResearchChunk> Chunks { get; init; }
+}
+
+/// <summary>
+/// One retrievable passage. Attribution is per chunk, not per document, because a citation that
+/// points at a whole document is not a citation an analyst can check.
+/// </summary>
+public sealed record ResearchChunk
+{
+    public required string Id { get; init; }
+    public required string DocumentId { get; init; }
+    public required int Ordinal { get; init; }
+    public required string Text { get; init; }
+}
+
+public sealed record Communication
+{
+    public required string Id { get; init; }
+    public required DateTimeOffset Timestamp { get; init; }
+    public required CommunicationChannel Channel { get; init; }
+    public required string FromParty { get; init; }
+    public required string ToParty { get; init; }
+    public required string Body { get; init; }
+    public string? Symbol { get; init; }
+
+    /// <summary>
+    /// Whether this message was planted as genuinely concerning.
+    ///
+    /// Ground truth exists so the demo can state a measured triage precision instead of asserting
+    /// one. It must never be fed to a model or to the ranker — a scoreboard that reads the answer
+    /// key is a scoreboard that proves nothing.
+    /// </summary>
+    public required bool GroundTruthConcerning { get; init; }
+}
+
+public sealed record Order
+{
+    public required string Id { get; init; }
+    public required DateTimeOffset Timestamp { get; init; }
+    public required string Symbol { get; init; }
+    public required OrderSide Side { get; init; }
+    public required int Quantity { get; init; }
+    public required decimal LimitPrice { get; init; }
+    public required string Venue { get; init; }
+    public required string TraderId { get; init; }
+}
+
+public sealed record Execution
+{
+    public required string Id { get; init; }
+    public required string OrderId { get; init; }
+    public required DateTimeOffset Timestamp { get; init; }
+    public required int Quantity { get; init; }
+    public required decimal Price { get; init; }
+    public required string Venue { get; init; }
+}
+
+/// <summary>
+/// One surveillance alert awaiting triage.
+///
+/// The evidence references are populated at generation time so that every alert resolves to real
+/// communications and real orders. An alert whose evidence does not resolve is the demo failure
+/// that surfaces only when someone clicks into the one row you did not rehearse.
+/// </summary>
+public sealed record SurveillanceAlert
+{
+    public required string Id { get; init; }
+    public required DateTimeOffset Timestamp { get; init; }
+    public required string Symbol { get; init; }
+    public required string TraderId { get; init; }
+    public required string AlertType { get; init; }
+    public required IReadOnlyList<string> CommunicationIds { get; init; }
+    public required IReadOnlyList<string> OrderIds { get; init; }
+    public required bool GroundTruthConcerning { get; init; }
+}
+
+/// <summary>The complete fixture set for one seed.</summary>
+public sealed record DemoDataSet
+{
+    public required ulong Seed { get; init; }
+    public required IReadOnlyList<ResearchDocument> ResearchDocuments { get; init; }
+    public required IReadOnlyList<Communication> Communications { get; init; }
+    public required IReadOnlyList<Order> Orders { get; init; }
+    public required IReadOnlyList<Execution> Executions { get; init; }
+    public required IReadOnlyList<SurveillanceAlert> Alerts { get; init; }
+
+    /// <summary>
+    /// Shown in the UI beside the triage queue. The audience is told the ranking is reproducible;
+    /// displaying the seed is what turns that from a claim into something they can check.
+    /// </summary>
+    public string SeedLabel => $"seed-{Seed:x16}";
+}
+
+===== FILE: src/Fcmr.Demo.Data/DemoUniverse.cs =====
+namespace Fcmr.Demo.Data;
+
+/// <summary>
+/// The fictional instruments, venues, desks, and people the fixtures are built from.
+///
+/// Everything here is invented. No real issuer, employee, or counterparty appears anywhere in the
+/// corpus: the demo runs in front of a regulated audience, and synthetic data that resembles a
+/// real firm's book invites exactly the question the demo should not spend time on.
+/// </summary>
+public static class DemoUniverse
+{
+    public static readonly IReadOnlyList<string> Symbols =
+    [
+        "ATLN", "BRDG", "CRVN", "DLTA", "EVRT", "FLGN", "GRDN", "HLYX",
+        "IRSA", "JVLN", "KSTL", "LMBD", "MRDN", "NVSA", "ORCL8", "PLRS",
+    ];
+
+    public static readonly IReadOnlyList<string> Venues =
+    [
+        "XLIT", "XMER", "XNOR", "XPAC", "DARK-1", "DARK-2",
+    ];
+
+    public static readonly IReadOnlyList<string> Traders =
+    [
+        "TRD-1041", "TRD-1052", "TRD-1078", "TRD-1093", "TRD-1110",
+        "TRD-1124", "TRD-1139", "TRD-1157", "TRD-1163", "TRD-1188",
+    ];
+
+    public static readonly IReadOnlyList<string> Counterparties =
+    [
+        "Northwind Securities", "Halberd Capital", "Ridgeline Partners",
+        "Fenwick Asset Management", "Corvus Trading", "Marlowe Brothers",
+    ];
+
+    public static readonly IReadOnlyList<string> ResearchSources =
+    [
+        "Internal Equity Research", "Sector Desk Note", "Macro Strategy Weekly",
+        "Credit Committee Minutes", "Earnings Call Transcript",
+    ];
+
+    public static readonly IReadOnlyList<string> AlertTypes =
+    [
+        "PotentialFrontRunning", "UnusualPreAnnouncementActivity", "WashTradeSuspicion",
+        "LayeringPattern", "OffVenueConcentration", "MarkingTheClose",
+    ];
+
+    /// <summary>Fixed epoch so every run produces identical timestamps for a given seed.</summary>
+    public static readonly DateTimeOffset Epoch = new(2026, 8, 3, 13, 30, 0, TimeSpan.Zero);
+}
+
+===== FILE: src/Fcmr.Demo.Data/DemoDataGenerator.cs =====
+namespace Fcmr.Demo.Data;
+
+public sealed record DemoDataOptions
+{
+    /// <summary>Master seed. The same seed must always produce a byte-identical fixture set.</summary>
+    public ulong Seed { get; init; } = 0x0FC0_2026_0910UL;
+
+    public int ResearchDocumentCount { get; init; } = 120;
+    public int CommunicationCount { get; init; } = 4_000;
+    public int OrderCount { get; init; } = 2_500;
+
+    /// <summary>
+    /// The acceptance criteria call for a 500-alert batch. Triage is only interesting at a volume
+    /// no analyst could work through by hand, and 500 is the number the demo says out loud.
+    /// </summary>
+    public int AlertCount { get; init; } = 500;
+
+    /// <summary>Proportion of communications planted as genuinely concerning.</summary>
+    public double ConcerningCommunicationRate { get; init; } = 0.03;
+}
+
+/// <summary>
+/// Builds the complete synthetic fixture set. Pure, offline, and reproducible.
+///
+/// Each collection draws from its own named stream, so changing the size of one collection does
+/// not shift any other. That property is what lets the fixture set grow between rehearsals without
+/// invalidating the run that was already rehearsed.
+/// </summary>
+public static class DemoDataGenerator
+{
+    public static DemoDataSet Generate(DemoDataOptions? options = null)
+    {
+        var opts = options ?? new DemoDataOptions();
+
+        var documents = GenerateResearch(opts);
+        var communications = GenerateCommunications(opts);
+        var orders = GenerateOrders(opts);
+        var executions = GenerateExecutions(opts, orders);
+        var alerts = GenerateAlerts(opts, communications, orders);
+
+        return new DemoDataSet
+        {
+            Seed = opts.Seed,
+            ResearchDocuments = documents,
+            Communications = communications,
+            Orders = orders,
+            Executions = executions,
+            Alerts = alerts,
+        };
+    }
+
+    private static List<ResearchDocument> GenerateResearch(DemoDataOptions opts)
+    {
+        var rng = DeterministicRandom.ForStream(opts.Seed, "research");
+        var documents = new List<ResearchDocument>(opts.ResearchDocumentCount);
+
+        string[] themes =
+        [
+            "margin compression", "order book depth", "settlement latency", "funding spreads",
+            "sector rotation", "issuance pipeline", "counterparty concentration", "collateral haircuts",
+        ];
+
+        for (var i = 0; i < opts.ResearchDocumentCount; i++)
+        {
+            var symbol = rng.Pick(DemoUniverse.Symbols);
+            var theme = rng.Pick(themes);
+            var source = rng.Pick(DemoUniverse.ResearchSources);
+            var docId = $"doc-{i:D4}";
+            var published = DemoUniverse.Epoch.AddDays(-rng.Next(1, 180)).AddMinutes(rng.Next(0, 480));
+
+            var chunkCount = rng.Next(3, 8);
+            var chunks = new List<ResearchChunk>(chunkCount);
+
+            for (var c = 0; c < chunkCount; c++)
+            {
+                // Each chunk states one checkable fact. Synthesis with per-claim attribution is
+                // only demonstrable if the underlying passages contain discrete, citable claims.
+                var figure = rng.NextDecimal(0.5m, 48.0m);
+                var quarter = rng.Next(1, 5);
+
+                chunks.Add(new ResearchChunk
+                {
+                    Id = $"{docId}-c{c:D2}",
+                    DocumentId = docId,
+                    Ordinal = c,
+                    Text =
+                        $"{symbol} {theme} moved {figure:0.00} percent in Q{quarter}. " +
+                        $"The desk attributes the change to {rng.Pick(themes)} across {rng.Pick(DemoUniverse.Venues)}. " +
+                        $"Coverage note {c + 1} of {chunkCount}.",
+                });
+            }
+
+            documents.Add(new ResearchDocument
+            {
+                Id = docId,
+                Title = $"{symbol} — {char.ToUpperInvariant(theme[0])}{theme[1..]} review",
+                Source = source,
+                Symbol = symbol,
+                PublishedAt = published,
+                Chunks = chunks,
+            });
+        }
+
+        return documents;
+    }
+
+    private static List<Communication> GenerateCommunications(DemoDataOptions opts)
+    {
+        var rng = DeterministicRandom.ForStream(opts.Seed, "communications");
+        var result = new List<Communication>(opts.CommunicationCount);
+
+        string[] benign =
+        [
+            "Can you confirm the fill on that block before close.",
+            "Sending the revised sheet over shortly.",
+            "Client wants to work the balance across the session.",
+            "No change to the limit, keep it resting.",
+            "Settlement instructions came through fine this morning.",
+            "Let's revisit sizing after the print.",
+        ];
+
+        // Deliberately ambiguous rather than cartoonish. A surveillance demo where the concerning
+        // messages announce themselves proves only that string matching works.
+        string[] concerning =
+        [
+            "Hold off on the sell until after the announcement lands.",
+            "Heard from the other side of the wall, size it up before it's public.",
+            "Keep this off the recorded line and just work it quietly.",
+            "We can cross it internally and nobody has to see the print.",
+            "Push the last few lots into the close to help the mark.",
+            "Do the usual, buy it back tomorrow so it nets flat.",
+        ];
+
+        for (var i = 0; i < opts.CommunicationCount; i++)
+        {
+            var isConcerning = rng.NextBool(opts.ConcerningCommunicationRate);
+            var symbol = rng.NextBool(0.8) ? rng.Pick(DemoUniverse.Symbols) : null;
+
+            result.Add(new Communication
+            {
+                Id = $"comm-{i:D5}",
+                Timestamp = DemoUniverse.Epoch.AddMinutes(-rng.Next(0, 20_160)),
+                Channel = (CommunicationChannel)rng.Next(0, 3),
+                FromParty = rng.Pick(DemoUniverse.Traders),
+                ToParty = rng.NextBool(0.5)
+                    ? rng.Pick(DemoUniverse.Traders)
+                    : rng.Pick(DemoUniverse.Counterparties),
+                Body = isConcerning ? rng.Pick(concerning) : rng.Pick(benign),
+                Symbol = symbol,
+                GroundTruthConcerning = isConcerning,
+            });
+        }
+
+        return result;
+    }
+
+    private static List<Order> GenerateOrders(DemoDataOptions opts)
+    {
+        var rng = DeterministicRandom.ForStream(opts.Seed, "orders");
+        var result = new List<Order>(opts.OrderCount);
+
+        for (var i = 0; i < opts.OrderCount; i++)
+        {
+            result.Add(new Order
+            {
+                Id = $"ord-{i:D5}",
+                Timestamp = DemoUniverse.Epoch.AddMinutes(-rng.Next(0, 20_160)),
+                Symbol = rng.Pick(DemoUniverse.Symbols),
+                Side = rng.NextBool(0.5) ? OrderSide.Buy : OrderSide.Sell,
+                Quantity = rng.Next(1, 40) * 100,
+                LimitPrice = rng.NextDecimal(8.0m, 420.0m),
+                Venue = rng.Pick(DemoUniverse.Venues),
+                TraderId = rng.Pick(DemoUniverse.Traders),
+            });
+        }
+
+        return result;
+    }
+
+    private static List<Execution> GenerateExecutions(DemoDataOptions opts, List<Order> orders)
+    {
+        var rng = DeterministicRandom.ForStream(opts.Seed, "executions");
+        var result = new List<Execution>();
+
+        foreach (var order in orders)
+        {
+            // Partial fills are the norm; an all-or-nothing blotter looks synthetic at a glance
+            // to exactly the audience this demo is for.
+            var fills = rng.Next(1, 4);
+            var remaining = order.Quantity;
+
+            for (var f = 0; f < fills && remaining > 0; f++)
+            {
+                var isLast = f == fills - 1;
+                var qty = isLast ? remaining : Math.Max(100, remaining / (fills - f));
+                qty = Math.Min(qty, remaining);
+                remaining -= qty;
+
+                result.Add(new Execution
+                {
+                    Id = $"exe-{result.Count:D6}",
+                    OrderId = order.Id,
+                    Timestamp = order.Timestamp.AddSeconds(rng.Next(1, 900)),
+                    Quantity = qty,
+                    Price = Math.Round(order.LimitPrice * (decimal)(0.995 + (rng.NextDouble() * 0.01)), 4),
+                    Venue = rng.NextBool(0.85) ? order.Venue : rng.Pick(DemoUniverse.Venues),
+                });
+            }
+        }
+
+        return result;
+    }
+
+    private static List<SurveillanceAlert> GenerateAlerts(
+        DemoDataOptions opts,
+        List<Communication> communications,
+        List<Order> orders)
+    {
+        var rng = DeterministicRandom.ForStream(opts.Seed, "alerts");
+        var result = new List<SurveillanceAlert>(opts.AlertCount);
+
+        var concerningComms = communications.Where(c => c.GroundTruthConcerning).ToList();
+        var benignComms = communications.Where(c => !c.GroundTruthConcerning).ToList();
+
+        // Roughly a fifth of the batch is genuinely concerning. High enough that triage has real
+        // work to do, low enough that ranking has to discriminate rather than pass everything.
+        var concerningTarget = Math.Min(opts.AlertCount / 5, concerningComms.Count);
+
+        for (var i = 0; i < opts.AlertCount; i++)
+        {
+            var isConcerning = i < concerningTarget;
+            var seedComm = isConcerning
+                ? concerningComms[i % concerningComms.Count]
+                : rng.Pick(benignComms);
+
+            var symbol = seedComm.Symbol ?? rng.Pick(DemoUniverse.Symbols);
+            var trader = seedComm.FromParty;
+
+            // Evidence must resolve. Prefer the same symbol and trader so the alert detail view
+            // tells a coherent story rather than a random one.
+            var relatedOrders = orders
+                .Where(o => string.Equals(o.Symbol, symbol, StringComparison.Ordinal))
+                .Take(3)
+                .Select(o => o.Id)
+                .ToList();
+
+            if (relatedOrders.Count == 0)
+            {
+                relatedOrders = [rng.Pick(orders).Id];
+            }
+
+            var relatedComms = new List<string> { seedComm.Id };
+            var extra = rng.Next(0, 3);
+            for (var e = 0; e < extra; e++)
+            {
+                relatedComms.Add(rng.Pick(communications).Id);
+            }
+
+            result.Add(new SurveillanceAlert
+            {
+                Id = $"alert-{i:D4}",
+                Timestamp = seedComm.Timestamp.AddMinutes(rng.Next(5, 120)),
+                Symbol = symbol,
+                TraderId = trader,
+                AlertType = rng.Pick(DemoUniverse.AlertTypes),
+                CommunicationIds = relatedComms,
+                OrderIds = relatedOrders,
+                GroundTruthConcerning = isConcerning,
+            });
+        }
+
+        // Shuffle so the concerning alerts are not the first hundred rows. Ranking that only has
+        // to preserve input order is not ranking.
+        for (var i = result.Count - 1; i > 0; i--)
+        {
+            var j = rng.Next(i + 1);
+            (result[i], result[j]) = (result[j], result[i]);
+        }
+
+        return result;
+    }
+}
+
+===== FILE: tests/Fcmr.Router.Decisions.Tests/RoutingPlannerTests.cs =====
+using FluentAssertions;
+using Fcmr.Router.Decisions;
+using Xunit;
+
+namespace Fcmr.Router.Decisions.Tests;
+
+/// <summary>
+/// T-209, T-210, T-211. The evaluation order is the feature; these tests assert it behaviourally
+/// rather than by reading the code, because code reading does not survive a refactor.
+/// </summary>
+public class RoutingPlannerTests
+{
+    private static PolicySet Policy(params ModelVendor[] approved) => new()
+    {
+        Id = "CapitalMarkets-US",
+        BusinessUnit = "CapitalMarkets",
+        DisplayName = "Capital Markets",
+        ApprovedVendors = new HashSet<ModelVendor>(approved),
+        MaxClassification = approved.ToDictionary(v => v, _ => DataClassification.Confidential),
+        Version = 4,
+    };
+
+    private static RoutingRequest Request(
+        DataClassification classification = DataClassification.Internal,
+        decimal ceiling = 1.00m,
+        int tokens = 8_000) => new()
+        {
+            Hints = new ComplexityHints { InputTokenEstimate = tokens },
+            CostCeilingUsd = ceiling,
+            DataClassification = classification,
+        };
+
+    [Fact]
+    public void Plan_WhenTheCheapestModelIsUnapproved_DoesNotSelectIt()
+    {
+        // The load-bearing test for evaluation order. The cheapest model in the catalog by a wide
+        // margin belongs to a vendor governance has not approved. If cost ran before policy, a
+        // cost optimiser would reach straight for it — which is the exact failure the exchange
+        // exists to prevent.
+        var catalog = new List<TierPricing>
+        {
+            new()
+            {
+                Tier = ModelTier.Standard, Deployment = "unapproved-bargain",
+                CostPerRequestUsd = 0.0001m, Vendor = ModelVendor.XAI,
+            },
+            new()
+            {
+                Tier = ModelTier.Standard, Deployment = "approved-standard",
+                CostPerRequestUsd = 0.500m, Vendor = ModelVendor.AzureOpenAI,
+            },
+        };
+
+        var decision = RoutingPlanner.Plan(Request(), catalog, Policy(ModelVendor.AzureOpenAI));
+
+        decision.SelectedDeployment.Should().Be("approved-standard");
+        decision.SelectedVendor.Should().Be(ModelVendor.AzureOpenAI);
+        decision.CandidateTiers.Should().NotContain(c => c.Deployment == "unapproved-bargain" && c.Selected);
+        decision.PolicyExclusions.Should().ContainSingle(e => e.Deployment == "unapproved-bargain");
+    }
+
+    [Fact]
+    public void Plan_ExcludedModelsAreNeverOfferedToTheSelector()
+    {
+        // Stronger than "was not selected": the selector must not even see them. An excluded model
+        // appearing among the candidates would mean the gate filtered nothing.
+        var catalog = new List<TierPricing>
+        {
+            new() { Tier = ModelTier.Economy, Deployment = "a", CostPerRequestUsd = 0.001m, Vendor = ModelVendor.XAI },
+            new() { Tier = ModelTier.Standard, Deployment = "b", CostPerRequestUsd = 0.030m, Vendor = ModelVendor.AzureOpenAI },
+        };
+
+        var decision = RoutingPlanner.Plan(Request(), catalog, Policy(ModelVendor.AzureOpenAI));
+
+        decision.CandidateTiers.Should().ContainSingle()
+            .Which.Deployment.Should().Be("b");
+    }
+
+    [Fact]
+    public void Plan_AppliesThePolicyCeilingWhenItIsLowerThanTheRequestCeiling()
+    {
+        var catalog = new List<TierPricing>
+        {
+            new() { Tier = ModelTier.Economy, Deployment = "cheap", CostPerRequestUsd = 0.001m, Vendor = ModelVendor.AzureOpenAI },
+            new() { Tier = ModelTier.Standard, Deployment = "mid", CostPerRequestUsd = 0.400m, Vendor = ModelVendor.AzureOpenAI },
+        };
+
+        var policy = Policy(ModelVendor.AzureOpenAI) with { MaxCostPerRequestUsd = 0.100m };
+
+        // The request would allow 1.00 USD; policy caps it at 0.10.
+        var decision = RoutingPlanner.Plan(Request(ceiling: 1.00m), catalog, policy);
+
+        decision.SelectedDeployment.Should().Be("cheap");
+        decision.PolicyExclusions.Should().ContainSingle(e => e.Deployment == "mid")
+            .Which.Reason.Should().Contain("policy ceiling");
+    }
+
+    [Fact]
+    public void Plan_PinsThePolicySetVersionOntoTheDecision()
+    {
+        var catalog = new List<TierPricing>
+        {
+            new() { Tier = ModelTier.Standard, Deployment = "gpt", CostPerRequestUsd = 0.030m, Vendor = ModelVendor.AzureOpenAI },
+        };
+
+        var decision = RoutingPlanner.Plan(
+            Request(), catalog, Policy(ModelVendor.AzureOpenAI) with { Version = 11 });
+
+        decision.PolicySetId.Should().Be("CapitalMarkets-US");
+        decision.PolicySetVersion.Should().Be(11,
+            "replaying an audit record after a policy edit must show the policy that actually applied");
+        decision.DataClassification.Should().Be(DataClassification.Internal);
+    }
+
+    [Fact]
+    public void Plan_RefusalIsDistinctFromDenial()
+    {
+        var catalog = new List<TierPricing>
+        {
+            new() { Tier = ModelTier.Standard, Deployment = "gpt", CostPerRequestUsd = 0.030m, Vendor = ModelVendor.AzureOpenAI },
+        };
+
+        var refused = RoutingPlanner.Plan(Request(), catalog, Policy(ModelVendor.Anthropic));
+        var denied = RoutingPlanner.Plan(Request(ceiling: 0.0001m), catalog, Policy(ModelVendor.AzureOpenAI));
+
+        refused.Outcome.Should().Be(RoutingOutcome.RefusedByPolicy);
+        denied.Outcome.Should().Be(RoutingOutcome.Denied);
+        refused.Outcome.Should().NotBe(denied.Outcome,
+            "'not permitted' and 'too expensive' are different conversations with different people");
+    }
+
+    [Fact]
+    public void Plan_RefusalRationaleNamesTheVendorsAndTheClassification()
+    {
+        // The presenter reads this sentence aloud in Beat 5. "Refused by policy" is not an answer
+        // a governance audience accepts.
+        var catalog = new List<TierPricing>
+        {
+            new() { Tier = ModelTier.Standard, Deployment = "gpt", CostPerRequestUsd = 0.030m, Vendor = ModelVendor.AzureOpenAI },
+            new() { Tier = ModelTier.Premium, Deployment = "claude", CostPerRequestUsd = 0.090m, Vendor = ModelVendor.Anthropic },
+        };
+
+        var decision = RoutingPlanner.Plan(
+            Request(DataClassification.Restricted), catalog, Policy(ModelVendor.XAI));
+
+        decision.Rationale.Should().Contain("CapitalMarkets-US");
+        decision.Rationale.Should().Contain("Restricted");
+        decision.Rationale.Should().Contain("AzureOpenAI");
+        decision.Rationale.Should().Contain("Anthropic");
+        decision.PolicyExclusions.Should().OnlyContain(
+            e => e.Kind == PolicyExclusionKind.VendorNotApproved);
+    }
+
+    [Fact]
+    public void Plan_WhenEveryCandidateIsPricedOutByPolicy_SaysItIsACostOutcome()
+    {
+        // Without this the audience is told "governance refused it" when the truth is "nobody was
+        // willing to pay for it" -- two different conversations with two different owners.
+        var catalog = new List<TierPricing>
+        {
+            new() { Tier = ModelTier.Standard, Deployment = "gpt", CostPerRequestUsd = 0.030m, Vendor = ModelVendor.AzureOpenAI },
+        };
+
+        var policy = Policy(ModelVendor.AzureOpenAI) with { MaxCostPerRequestUsd = 0.001m };
+
+        var decision = RoutingPlanner.Plan(Request(), catalog, policy);
+
+        decision.Outcome.Should().Be(RoutingOutcome.RefusedByPolicy);
+        decision.PolicyExclusions.Should().OnlyContain(
+            e => e.Kind == PolicyExclusionKind.PolicyCostCeiling);
+        decision.Rationale.Should().Contain("cost outcome rather than a governance one");
+    }
+
+    [Fact]
+    public void Plan_WithSeveralVendorsInTheIndicatedTier_TakesTheCheapest()
+    {
+        var catalog = new List<TierPricing>
+        {
+            new() { Tier = ModelTier.Standard, Deployment = "expensive", CostPerRequestUsd = 0.080m, Vendor = ModelVendor.AzureOpenAI },
+            new() { Tier = ModelTier.Standard, Deployment = "cheapest", CostPerRequestUsd = 0.020m, Vendor = ModelVendor.Anthropic },
+            new() { Tier = ModelTier.Standard, Deployment = "middle", CostPerRequestUsd = 0.050m, Vendor = ModelVendor.XAI },
+        };
+
+        var decision = RoutingPlanner.Plan(
+            Request(), catalog, Policy(ModelVendor.AzureOpenAI, ModelVendor.Anthropic, ModelVendor.XAI));
+
+        decision.SelectedDeployment.Should().Be("cheapest");
+        decision.SelectedVendor.Should().Be(ModelVendor.Anthropic);
+    }
+
+    [Fact]
+    public void Plan_MarksExactlyOneCandidateSelected()
+    {
+        // A multi-vendor catalog puts several models in one tier. Marking selection by tier
+        // rather than by deployment would flag every same-tier competitor as the one that ran,
+        // and the scoreboard's cost attribution is only as honest as this flag.
+        var catalog = new List<TierPricing>
+        {
+            new() { Tier = ModelTier.Standard, Deployment = "a", CostPerRequestUsd = 0.020m, Vendor = ModelVendor.AzureOpenAI },
+            new() { Tier = ModelTier.Standard, Deployment = "b", CostPerRequestUsd = 0.030m, Vendor = ModelVendor.Anthropic },
+            new() { Tier = ModelTier.Standard, Deployment = "c", CostPerRequestUsd = 0.040m, Vendor = ModelVendor.XAI },
+        };
+
+        var decision = RoutingPlanner.Plan(
+            Request(), catalog, Policy(ModelVendor.AzureOpenAI, ModelVendor.Anthropic, ModelVendor.XAI));
+
+        decision.CandidateTiers.Count(c => c.Selected).Should().Be(1);
+        decision.CandidateTiers.Where(c => !c.Selected).Should()
+            .OnlyContain(c => !string.IsNullOrWhiteSpace(c.RejectedReason));
+    }
+
+    [Fact]
+    public void Plan_IsDeterministic_ForIdenticalInputs()
+    {
+        // Beat 5 submits byte-identical payloads either side of a policy change. Any nondeterminism
+        // here reads on stage as the router being arbitrary.
+        var catalog = new List<TierPricing>
+        {
+            new() { Tier = ModelTier.Standard, Deployment = "a", CostPerRequestUsd = 0.030m, Vendor = ModelVendor.AzureOpenAI },
+            new() { Tier = ModelTier.Standard, Deployment = "b", CostPerRequestUsd = 0.030m, Vendor = ModelVendor.Anthropic },
+        };
+
+        var policy = Policy(ModelVendor.AzureOpenAI, ModelVendor.Anthropic);
+
+        var first = RoutingPlanner.Plan(Request(), catalog, policy);
+        var second = RoutingPlanner.Plan(Request(), catalog, policy);
+
+        second.SelectedDeployment.Should().Be(first.SelectedDeployment);
+        second.Rationale.Should().Be(first.Rationale);
+    }
+
+    [Fact]
+    public void Plan_WithAnEmptyCatalog_Throws()
+    {
+        var act = () => RoutingPlanner.Plan(Request(), [], Policy(ModelVendor.AzureOpenAI));
+
+        act.Should().Throw<ArgumentException>();
+    }
+}
+
+===== FILE: tests/Fcmr.Router.Decisions.Tests/PolicyInvariantTests.cs =====
+using FluentAssertions;
+using Fcmr.Router.Decisions;
+using Xunit;
+
+namespace Fcmr.Router.Decisions.Tests;
+
+/// <summary>
+/// T-218 and T-219. The invariant the whole feature rests on:
+///
+///   <c>a selected vendor is always approved, and always permitted to see the request's data.</c>
+///
+/// The task called for a property test. The policy domain is finite and small — four vendors, so
+/// sixteen approval subsets, four classifications each, and four-to-the-fourth classification maps
+/// — so this enumerates the domain in full instead. Exhaustive enumeration is strictly stronger
+/// than sampled property testing here: it cannot miss a case, it needs no generator library, and
+/// it reproduces identically on every run, which matters for a repository with a hard determinism
+/// principle.
+/// </summary>
+public class PolicyInvariantTests
+{
+    private static readonly ModelVendor[] AllVendors =
+    [
+        ModelVendor.AzureOpenAI, ModelVendor.Anthropic, ModelVendor.XAI, ModelVendor.OpenWeight,
+    ];
+
+    private static readonly DataClassification[] AllClassifications =
+    [
+        DataClassification.Public, DataClassification.Internal,
+        DataClassification.Confidential, DataClassification.Restricted,
+    ];
+
+    /// <summary>Twelve deployments: every vendor competing at every tier.</summary>
+    private static List<TierPricing> FullCatalog()
+    {
+        var catalog = new List<TierPricing>();
+        var tierCost = new Dictionary<ModelTier, decimal>
+        {
+            [ModelTier.Economy] = 0.002m,
+            [ModelTier.Standard] = 0.030m,
+            [ModelTier.Premium] = 0.090m,
+        };
+
+        foreach (var vendor in AllVendors)
+        {
+            foreach (var (tier, baseCost) in tierCost)
+            {
+                catalog.Add(new TierPricing
+                {
+                    Tier = tier,
+                    Deployment = $"{vendor}-{tier}".ToLowerInvariant(),
+                    // Spread costs within a tier so cheapest-within-tier is a real choice.
+                    CostPerRequestUsd = baseCost + (Array.IndexOf(AllVendors, vendor) * 0.001m),
+                    Vendor = vendor,
+                    Serving = vendor == ModelVendor.OpenWeight
+                        ? ServingMode.ManagedCompute
+                        : ServingMode.Serverless,
+                });
+            }
+        }
+
+        return catalog;
+    }
+
+    private static PolicySet Build(
+        IReadOnlySet<ModelVendor> approved,
+        IReadOnlyDictionary<ModelVendor, DataClassification> maxClass) => new()
+        {
+            Id = "CapitalMarkets-US",
+            BusinessUnit = "CapitalMarkets",
+            ApprovedVendors = approved,
+            MaxClassification = maxClass,
+            Version = 3,
+        };
+
+    [Fact]
+    public void Plan_AcrossTheEntirePolicyDomain_NeverSelectsAnUnapprovedOrOverClearedVendor()
+    {
+        var catalog = FullCatalog();
+        var failures = new List<string>();
+        var cases = 0;
+        var routed = 0;
+        var refused = 0;
+
+        // All 16 approval subsets.
+        for (var mask = 0; mask < 1 << 4; mask++)
+        {
+            var approved = new HashSet<ModelVendor>();
+            for (var bit = 0; bit < AllVendors.Length; bit++)
+            {
+                if ((mask & (1 << bit)) != 0)
+                {
+                    approved.Add(AllVendors[bit]);
+                }
+            }
+
+            // All 256 assignments of a maximum classification to the four vendors.
+            for (var assignment = 0; assignment < 256; assignment++)
+            {
+                var maxClass = new Dictionary<ModelVendor, DataClassification>();
+                for (var bit = 0; bit < AllVendors.Length; bit++)
+                {
+                    var vendor = AllVendors[bit];
+                    if (approved.Contains(vendor))
+                    {
+                        maxClass[vendor] = AllClassifications[(assignment >> (bit * 2)) & 0b11];
+                    }
+                }
+
+                var policy = Build(approved, maxClass);
+
+                foreach (var classification in AllClassifications)
+                {
+                    cases++;
+
+                    var decision = RoutingPlanner.Plan(
+                        new RoutingRequest
+                        {
+                            Hints = new ComplexityHints { InputTokenEstimate = 8_000 },
+                            CostCeilingUsd = 10.00m,
+                            DataClassification = classification,
+                        },
+                        catalog,
+                        policy);
+
+                    if (decision.SelectedVendor is null)
+                    {
+                        refused++;
+
+                        // A non-selection must be an explicit governed outcome, never a quiet null.
+                        if (decision.Outcome is not (RoutingOutcome.RefusedByPolicy or RoutingOutcome.Denied))
+                        {
+                            failures.Add(
+                                $"mask={mask} assign={assignment} class={classification}: " +
+                                $"no vendor selected but outcome was {decision.Outcome}.");
+                        }
+
+                        continue;
+                    }
+
+                    routed++;
+                    var vendor = decision.SelectedVendor.Value;
+
+                    if (!approved.Contains(vendor))
+                    {
+                        failures.Add(
+                            $"mask={mask} assign={assignment} class={classification}: " +
+                            $"selected unapproved vendor {vendor}.");
+                    }
+                    else if (!maxClass.TryGetValue(vendor, out var permitted) || classification > permitted)
+                    {
+                        failures.Add(
+                            $"mask={mask} assign={assignment} class={classification}: " +
+                            $"selected {vendor} cleared only to {(maxClass.TryGetValue(vendor, out var p) ? p.ToString() : "nothing")}.");
+                    }
+                }
+            }
+        }
+
+        cases.Should().Be(16 * 256 * 4, "the enumeration must cover the whole domain");
+        routed.Should().BeGreaterThan(0, "a test where nothing ever routes proves nothing");
+        refused.Should().BeGreaterThan(0, "the empty policy set must genuinely refuse");
+        failures.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Plan_WhenPolicyLeavesNothingEligible_RefusesRatherThanDenies()
+    {
+        var policy = Build(new HashSet<ModelVendor>(), new Dictionary<ModelVendor, DataClassification>());
+
+        var decision = RoutingPlanner.Plan(
+            new RoutingRequest
+            {
+                Hints = new ComplexityHints { InputTokenEstimate = 1_000 },
+                CostCeilingUsd = 10.00m,
+                DataClassification = DataClassification.Internal,
+            },
+            FullCatalog(),
+            policy);
+
+        decision.Outcome.Should().Be(RoutingOutcome.RefusedByPolicy,
+            "governance refusal and cost denial are different conversations with different people");
+        decision.SelectedDeployment.Should().BeNull();
+        decision.SelectedVendor.Should().BeNull();
+
+        // T-219: every candidate is named, each with its own reason.
+        decision.PolicyExclusions.Should().HaveCount(12);
+        decision.PolicyExclusions.Should().OnlyContain(e => !string.IsNullOrWhiteSpace(e.Reason));
+        decision.CandidateTiers.Should().OnlyContain(c => c.RejectedReason != null && !c.Selected);
+    }
+
+    [Fact]
+    public void Plan_RemovingEachVendorInTurn_StillYieldsAValidPlan()
+    {
+        // T-219. Four vendors, remove one at a time, four valid plans. This is the claim the demo
+        // makes out loud: any single vendor can be withdrawn and the exchange keeps working.
+        foreach (var removed in AllVendors)
+        {
+            var approved = new HashSet<ModelVendor>(AllVendors.Where(v => v != removed));
+            var maxClass = approved.ToDictionary(v => v, _ => DataClassification.Confidential);
+
+            var decision = RoutingPlanner.Plan(
+                new RoutingRequest
+                {
+                    Hints = new ComplexityHints { InputTokenEstimate = 8_000 },
+                    CostCeilingUsd = 10.00m,
+                    DataClassification = DataClassification.Internal,
+                },
+                FullCatalog(),
+                Build(approved, maxClass));
+
+            decision.Outcome.Should().BeOneOf(RoutingOutcome.Routed, RoutingOutcome.Downgraded);
+            decision.SelectedVendor.Should().NotBe(removed,
+                $"withdrawing {removed} must actually withdraw it");
+            decision.PolicyExclusions.Should().Contain(e => e.Vendor == removed);
+        }
+    }
+
+    [Fact]
+    public void Plan_WhenOnlyRestrictedCapableVendorRemains_RoutesToManagedCompute()
+    {
+        var approved = new HashSet<ModelVendor>(AllVendors);
+        var maxClass = new Dictionary<ModelVendor, DataClassification>
+        {
+            [ModelVendor.AzureOpenAI] = DataClassification.Confidential,
+            [ModelVendor.Anthropic] = DataClassification.Internal,
+            [ModelVendor.XAI] = DataClassification.Internal,
+            [ModelVendor.OpenWeight] = DataClassification.Restricted,
+        };
+
+        var decision = RoutingPlanner.Plan(
+            new RoutingRequest
+            {
+                Hints = new ComplexityHints { InputTokenEstimate = 20_000, RequiresMultiStep = true },
+                CostCeilingUsd = 10.00m,
+                DataClassification = DataClassification.Restricted,
+            },
+            FullCatalog(),
+            Build(approved, maxClass));
+
+        decision.SelectedVendor.Should().Be(ModelVendor.OpenWeight);
+        decision.DataClassification.Should().Be(DataClassification.Restricted);
+    }
+}
+
+===== FILE: tests/Fcmr.Router.Decisions.Tests/PolicySetRepositoryTests.cs =====
+using FluentAssertions;
+using Fcmr.Router.Decisions;
+using Xunit;
+
+namespace Fcmr.Router.Decisions.Tests;
+
+/// <summary>
+/// T-203. Optimistic concurrency, validation, and the change diff.
+///
+/// The behaviour proven here is the behaviour the Cosmos implementation must reproduce: a stale
+/// write is rejected, never merged.
+/// </summary>
+public class PolicySetRepositoryTests
+{
+    private static PolicySet Baseline() => new()
+    {
+        Id = "CapitalMarkets-US",
+        BusinessUnit = "CapitalMarkets",
+        DisplayName = "Capital Markets — US",
+        ApprovedVendors = new HashSet<ModelVendor>
+        {
+            ModelVendor.AzureOpenAI, ModelVendor.Anthropic, ModelVendor.XAI, ModelVendor.OpenWeight,
+        },
+        MaxClassification = new Dictionary<ModelVendor, DataClassification>
+        {
+            [ModelVendor.AzureOpenAI] = DataClassification.Confidential,
+            [ModelVendor.Anthropic] = DataClassification.Internal,
+            [ModelVendor.XAI] = DataClassification.Internal,
+            [ModelVendor.OpenWeight] = DataClassification.Restricted,
+        },
+        AllowedRegions = new HashSet<string> { "eastus2" },
+        MaxCostPerRequestUsd = 0.5m,
+        PermitsRestrictedData = true,
+        Version = 3,
+    };
+
+    private static InMemoryPolicySetRepository Repo() => new([Baseline()]);
+
+    private static PolicySetUpdate Update(int expectedVersion, params ModelVendor[] approved) => new()
+    {
+        Id = "CapitalMarkets-US",
+        BusinessUnit = "CapitalMarkets",
+        ExpectedVersion = expectedVersion,
+        UpdatedBy = "8f1c-approver",
+        ApprovedVendors = new HashSet<ModelVendor>(approved),
+        MaxClassification = approved.ToDictionary(
+            v => v,
+            v => v == ModelVendor.OpenWeight ? DataClassification.Restricted : DataClassification.Internal),
+    };
+
+    [Fact]
+    public async Task UpdateAsync_WithTheCurrentVersion_IncrementsAndRecordsTheApprover()
+    {
+        var repo = Repo();
+
+        var result = await repo.UpdateAsync(
+            Update(3, ModelVendor.AzureOpenAI, ModelVendor.XAI, ModelVendor.OpenWeight));
+
+        result.PolicySet.Version.Should().Be(4);
+        result.PolicySet.UpdatedBy.Should().Be("8f1c-approver");
+        result.PolicySet.ApprovedVendors.Should().NotContain(ModelVendor.Anthropic);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_WithAStaleVersion_FailsAndDoesNotMerge()
+    {
+        var repo = Repo();
+
+        await repo.UpdateAsync(Update(3, ModelVendor.AzureOpenAI, ModelVendor.OpenWeight));
+
+        // A second approver still holding version 3 must not silently overwrite the first.
+        var act = async () => await repo.UpdateAsync(
+            Update(3, ModelVendor.AzureOpenAI, ModelVendor.Anthropic, ModelVendor.OpenWeight));
+
+        var thrown = await act.Should().ThrowAsync<PolicySetConcurrencyException>();
+        thrown.Which.ExpectedVersion.Should().Be(3);
+        thrown.Which.ActualVersion.Should().Be(4);
+
+        var current = await repo.GetAsync("CapitalMarkets", "CapitalMarkets-US");
+        current!.Version.Should().Be(4, "the rejected write must leave no trace");
+        current.ApprovedVendors.Should().NotContain(ModelVendor.Anthropic);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_ReturnsABeforeAndAfterDiff()
+    {
+        var repo = Repo();
+
+        var result = await repo.UpdateAsync(
+            Update(3, ModelVendor.AzureOpenAI, ModelVendor.XAI, ModelVendor.OpenWeight));
+
+        var vendorChange = result.Changed.Should().ContainSingle(c => c.Field == "approvedVendors").Subject;
+        vendorChange.From.Should().Contain("Anthropic");
+        vendorChange.To.Should().NotContain("Anthropic");
+    }
+
+    [Fact]
+    public async Task UpdateAsync_WhenTheChangeWouldLeaveRestrictedUnservable_Fails422()
+    {
+        var repo = Repo();
+
+        // Removing OpenWeight strands the set: it is declared to permit Restricted, and no
+        // remaining vendor may process it. Accepting this produces a policy set that refuses
+        // every restricted request, which surfaces as a demo failure rather than an error.
+        var act = async () => await repo.UpdateAsync(
+            Update(3, ModelVendor.AzureOpenAI, ModelVendor.Anthropic, ModelVendor.XAI));
+
+        var thrown = await act.Should().ThrowAsync<PolicySetValidationException>();
+        thrown.Which.Error.Failure.Should().Be(PolicyValidationFailure.RestrictedDataUnservable);
+        thrown.Which.Error.StatusCode.Should().Be(422);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_WhenClassificationNamesAnUnapprovedVendor_Fails400()
+    {
+        var repo = Repo();
+
+        var update = new PolicySetUpdate
+        {
+            Id = "CapitalMarkets-US",
+            BusinessUnit = "CapitalMarkets",
+            ExpectedVersion = 3,
+            UpdatedBy = "8f1c-approver",
+            ApprovedVendors = new HashSet<ModelVendor> { ModelVendor.AzureOpenAI, ModelVendor.OpenWeight },
+            MaxClassification = new Dictionary<ModelVendor, DataClassification>
+            {
+                [ModelVendor.AzureOpenAI] = DataClassification.Confidential,
+                [ModelVendor.OpenWeight] = DataClassification.Restricted,
+                [ModelVendor.Anthropic] = DataClassification.Internal,
+            },
+        };
+
+        var act = async () => await repo.UpdateAsync(update);
+
+        var thrown = await act.Should().ThrowAsync<PolicySetValidationException>();
+
+        thrown.Which.Error.Failure.Should().Be(PolicyValidationFailure.ClassificationNamesUnapprovedVendor);
+        thrown.Which.Error.StatusCode.Should().Be(400);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_WhenValidationFails_LeavesTheStoredSetUntouched()
+    {
+        var repo = Repo();
+
+        try
+        {
+            await repo.UpdateAsync(Update(3, ModelVendor.AzureOpenAI, ModelVendor.Anthropic, ModelVendor.XAI));
+        }
+        catch (PolicySetValidationException)
+        {
+            // expected
+        }
+
+        var current = await repo.GetAsync("CapitalMarkets", "CapitalMarkets-US");
+        current!.Version.Should().Be(3, "a rejected change must not burn a version");
+        current.ApprovedVendors.Should().Contain(ModelVendor.OpenWeight);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_OmittedFieldsAreLeftAlone()
+    {
+        var repo = Repo();
+
+        var result = await repo.UpdateAsync(new PolicySetUpdate
+        {
+            Id = "CapitalMarkets-US",
+            BusinessUnit = "CapitalMarkets",
+            ExpectedVersion = 3,
+            UpdatedBy = "8f1c-approver",
+            MaxCostPerRequestUsd = 0.25m,
+        });
+
+        result.PolicySet.MaxCostPerRequestUsd.Should().Be(0.25m);
+        result.PolicySet.ApprovedVendors.Should().HaveCount(4,
+            "an omitted field means 'unchanged', never 'cleared'");
+        result.PolicySet.AllowedRegions.Should().Contain("eastus2");
+    }
+
+    [Fact]
+    public async Task HistoryAsync_ReturnsMostRecentFirst()
+    {
+        var repo = Repo();
+
+        await repo.UpdateAsync(Update(3, ModelVendor.AzureOpenAI, ModelVendor.OpenWeight));
+        await repo.UpdateAsync(Update(4, ModelVendor.AzureOpenAI, ModelVendor.XAI, ModelVendor.OpenWeight));
+
+        var history = await repo.HistoryAsync("CapitalMarkets", "CapitalMarkets-US");
+
+        history.Should().HaveCount(2);
+        history[0].PolicySet.Version.Should().Be(5);
+        history[1].PolicySet.Version.Should().Be(4);
+    }
+
+    [Fact]
+    public async Task GetAsync_ForAnotherBusinessUnit_ReturnsNull()
+    {
+        var repo = Repo();
+
+        var other = await repo.GetAsync("RetailBanking", "CapitalMarkets-US");
+
+        other.Should().BeNull("governance is scoped per business unit");
+    }
+
+    [Fact]
+    public async Task UpdateAsync_ForAnUnknownSet_Throws()
+    {
+        var repo = Repo();
+
+        var act = async () => await repo.UpdateAsync(Update(1, ModelVendor.AzureOpenAI) with { Id = "Nope" });
+
+        await act.Should().ThrowAsync<PolicySetNotFoundException>();
+    }
+
+    [Fact]
+    public void Constructor_RejectsASeedThatCouldNotHaveBeenWrittenThroughTheApi()
+    {
+        var broken = Baseline() with
+        {
+            ApprovedVendors = new HashSet<ModelVendor> { ModelVendor.AzureOpenAI },
+            MaxClassification = new Dictionary<ModelVendor, DataClassification>
+            {
+                [ModelVendor.AzureOpenAI] = DataClassification.Confidential,
+            },
+            PermitsRestrictedData = true,
+        };
+
+        var act = () => new InMemoryPolicySetRepository([broken]);
+
+        act.Should().Throw<PolicySetValidationException>(
+            "a Terraform-seeded baseline must obey the same rules as an API write");
+    }
+
+    [Fact]
+    public async Task PolicyChange_IsVisibleToTheNextRoutingDecision()
+    {
+        // Beat 5 in miniature: change policy, resubmit an identical request, get a different plan.
+        var repo = Repo();
+        var catalog = new List<TierPricing>
+        {
+            new() { Tier = ModelTier.Standard, Deployment = "claude", CostPerRequestUsd = 0.020m, Vendor = ModelVendor.Anthropic },
+            new() { Tier = ModelTier.Standard, Deployment = "gpt", CostPerRequestUsd = 0.030m, Vendor = ModelVendor.AzureOpenAI },
+        };
+
+        var request = new RoutingRequest
+        {
+            Hints = new ComplexityHints { InputTokenEstimate = 8_000 },
+            CostCeilingUsd = 1.00m,
+            DataClassification = DataClassification.Internal,
+        };
+
+        var before = RoutingPlanner.Plan(
+            request, catalog, (await repo.GetAsync("CapitalMarkets", "CapitalMarkets-US"))!);
+
+        before.SelectedVendor.Should().Be(ModelVendor.Anthropic, "it is the cheapest approved option");
+
+        await repo.UpdateAsync(Update(3, ModelVendor.AzureOpenAI, ModelVendor.XAI, ModelVendor.OpenWeight));
+
+        var after = RoutingPlanner.Plan(
+            request, catalog, (await repo.GetAsync("CapitalMarkets", "CapitalMarkets-US"))!);
+
+        after.SelectedVendor.Should().Be(ModelVendor.AzureOpenAI,
+            "the same request, unchanged, must now route elsewhere");
+        after.PolicySetVersion.Should().Be(4);
+        before.PolicySetVersion.Should().Be(3, "the earlier decision keeps the version that governed it");
+    }
+}
+
+===== FILE: tests/Fcmr.Demo.Data.Tests/Fcmr.Demo.Data.Tests.csproj =====
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="FluentAssertions" />
+    <PackageReference Include="coverlet.collector" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Fcmr.Demo.Data/Fcmr.Demo.Data.csproj" />
+  </ItemGroup>
+
+</Project>
+
+===== FILE: tests/Fcmr.Demo.Data.Tests/DemoDataGeneratorTests.cs =====
+using FluentAssertions;
+using Fcmr.Demo.Data;
+using Xunit;
+
+namespace Fcmr.Demo.Data.Tests;
+
+/// <summary>
+/// T-021. The generators are only useful if they are reproducible, so reproducibility is what is
+/// tested hardest here. AC-6 claims the surveillance ranking is identical across two runs; that
+/// claim starts failing at the fixture layer if this does.
+/// </summary>
+public class DemoDataGeneratorTests
+{
+    [Fact]
+    public void Generate_WithTheSameSeed_ProducesIdenticalData()
+    {
+        var first = DemoDataGenerator.Generate(new DemoDataOptions { Seed = 42 });
+        var second = DemoDataGenerator.Generate(new DemoDataOptions { Seed = 42 });
+
+        second.Alerts.Should().BeEquivalentTo(first.Alerts, o => o.WithStrictOrdering());
+        second.Communications.Should().BeEquivalentTo(first.Communications, o => o.WithStrictOrdering());
+        second.Orders.Should().BeEquivalentTo(first.Orders, o => o.WithStrictOrdering());
+        second.Executions.Should().BeEquivalentTo(first.Executions, o => o.WithStrictOrdering());
+        second.ResearchDocuments.Should().BeEquivalentTo(first.ResearchDocuments, o => o.WithStrictOrdering());
+    }
+
+    [Fact]
+    public void Generate_WithADifferentSeed_ProducesDifferentData()
+    {
+        var first = DemoDataGenerator.Generate(new DemoDataOptions { Seed = 42 });
+        var second = DemoDataGenerator.Generate(new DemoDataOptions { Seed = 43 });
+
+        second.Alerts.Select(a => a.Id + a.Symbol)
+            .Should().NotEqual(first.Alerts.Select(a => a.Id + a.Symbol));
+    }
+
+    [Fact]
+    public void Generate_ChangingOneCollectionSize_DoesNotShiftTheOthers()
+    {
+        // Independent streams. Without this, adding a research document would silently rewrite
+        // every alert, and the fixture set could not grow between rehearsals.
+        var baseline = DemoDataGenerator.Generate(new DemoDataOptions { Seed = 7 });
+        var moreResearch = DemoDataGenerator.Generate(
+            new DemoDataOptions { Seed = 7, ResearchDocumentCount = 200 });
+
+        moreResearch.Orders.Should().BeEquivalentTo(baseline.Orders, o => o.WithStrictOrdering());
+        moreResearch.Communications.Should().BeEquivalentTo(
+            baseline.Communications, o => o.WithStrictOrdering());
+    }
+
+    [Fact]
+    public void Generate_ProducesTheFiveHundredAlertBatchTheAcceptanceCriteriaName()
+    {
+        var data = DemoDataGenerator.Generate();
+
+        data.Alerts.Should().HaveCount(500);
+        data.Alerts.Select(a => a.Id).Should().OnlyHaveUniqueItems();
+    }
+
+    [Fact]
+    public void Generate_EveryAlertResolvesToRealEvidence()
+    {
+        // The demo failure this prevents: an audience member clicks the one row nobody rehearsed
+        // and the evidence panel is empty.
+        var data = DemoDataGenerator.Generate();
+        var commIds = data.Communications.Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
+        var orderIds = data.Orders.Select(o => o.Id).ToHashSet(StringComparer.Ordinal);
+
+        foreach (var alert in data.Alerts)
+        {
+            alert.CommunicationIds.Should().NotBeEmpty();
+            alert.OrderIds.Should().NotBeEmpty();
+            alert.CommunicationIds.Should().OnlyContain(id => commIds.Contains(id));
+            alert.OrderIds.Should().OnlyContain(id => orderIds.Contains(id));
+        }
+    }
+
+    [Fact]
+    public void Generate_ConcerningAlertsAreNotClusteredAtTheTopOfTheBatch()
+    {
+        // If the concerning alerts arrive pre-sorted, a ranker that preserves input order scores
+        // perfectly and the reproducibility claim becomes vacuous.
+        var data = DemoDataGenerator.Generate();
+        var firstConcerningIndexes = data.Alerts
+            .Select((a, i) => (a, i))
+            .Where(x => x.a.GroundTruthConcerning)
+            .Select(x => x.i)
+            .ToList();
+
+        firstConcerningIndexes.Should().NotBeEmpty();
+        firstConcerningIndexes.Max().Should().BeGreaterThan(data.Alerts.Count / 2,
+            "concerning alerts must be spread through the batch");
+    }
+
+    [Fact]
+    public void Generate_EveryExecutionBelongsToAnOrderAndNeverOverfillsIt()
+    {
+        var data = DemoDataGenerator.Generate();
+        var byOrder = data.Executions.GroupBy(e => e.OrderId).ToDictionary(g => g.Key, g => g.Sum(e => e.Quantity));
+
+        foreach (var order in data.Orders)
+        {
+            if (byOrder.TryGetValue(order.Id, out var filled))
+            {
+                filled.Should().BeLessThanOrEqualTo(order.Quantity,
+                    $"order {order.Id} must never be overfilled");
+            }
+        }
+
+        data.Executions.Select(e => e.OrderId).Distinct()
+            .Should().BeSubsetOf(data.Orders.Select(o => o.Id));
+    }
+
+    [Fact]
+    public void Generate_ResearchChunksAreUniquelyIdentifiedAndOrdered()
+    {
+        var data = DemoDataGenerator.Generate();
+        var allChunks = data.ResearchDocuments.SelectMany(d => d.Chunks).ToList();
+
+        allChunks.Select(c => c.Id).Should().OnlyHaveUniqueItems(
+            "per-claim attribution needs a stable, unique citation target");
+
+        foreach (var doc in data.ResearchDocuments)
+        {
+            doc.Chunks.Select(c => c.Ordinal).Should().BeInAscendingOrder();
+            doc.Chunks.Should().OnlyContain(c => c.DocumentId == doc.Id);
+        }
+    }
+
+    [Fact]
+    public void SeedLabel_IsStableAndDisplayable()
+    {
+        var data = DemoDataGenerator.Generate(new DemoDataOptions { Seed = 0xABCDEF });
+
+        data.SeedLabel.Should().Be("seed-0000000000abcdef");
+    }
+}
+
+public class DeterministicRandomTests
+{
+    [Fact]
+    public void NextUInt64_IsStableForAKnownSeed()
+    {
+        // Pinned expectations. If the algorithm is ever changed, this fails loudly rather than
+        // silently invalidating every rehearsed fixture.
+        var rng = new DeterministicRandom(1);
+        var drawn = Enumerable.Range(0, 3).Select(_ => rng.NextUInt64()).ToList();
+
+        var replay = new DeterministicRandom(1);
+        Enumerable.Range(0, 3).Select(_ => replay.NextUInt64()).Should().Equal(drawn);
+    }
+
+    [Fact]
+    public void Constructor_WithZeroSeed_DoesNotCollapse()
+    {
+        // Zero is an absorbing state for xorshift; an unguarded generator returns zero forever.
+        var rng = new DeterministicRandom(0);
+        var values = Enumerable.Range(0, 10).Select(_ => rng.NextUInt64()).ToList();
+
+        values.Should().OnlyHaveUniqueItems();
+        values.Should().NotContain(0UL);
+    }
+
+    [Fact]
+    public void Next_StaysWithinBounds()
+    {
+        var rng = new DeterministicRandom(99);
+
+        for (var i = 0; i < 10_000; i++)
+        {
+            rng.Next(5, 9).Should().BeInRange(5, 8);
+            rng.NextDouble().Should().BeInRange(0.0, 1.0);
+        }
+    }
+
+    [Fact]
+    public void ForStream_GivesIndependentSequencesPerName()
+    {
+        var a = DeterministicRandom.ForStream(1, "orders");
+        var b = DeterministicRandom.ForStream(1, "alerts");
+
+        var first = Enumerable.Range(0, 5).Select(_ => a.NextUInt64()).ToList();
+        var second = Enumerable.Range(0, 5).Select(_ => b.NextUInt64()).ToList();
+
+        second.Should().NotEqual(first);
+    }
+
+    [Fact]
+    public void ForStream_IsStableForTheSameName()
+    {
+        var a = DeterministicRandom.ForStream(5, "orders");
+        var b = DeterministicRandom.ForStream(5, "orders");
+
+        a.NextUInt64().Should().Be(b.NextUInt64());
+    }
+}
+
+===== FILE: src/webui/index.html =====
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Governed AI Exchange</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
+===== FILE: src/webui/vite.config.ts =====
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    port: 5173,
+  },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test-setup.ts'],
+  },
+});
+
+===== FILE: src/webui/tsconfig.json =====
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": false,
+    "types": ["vitest/globals", "@testing-library/jest-dom"]
+  },
+  "include": ["src"]
+}
+
+===== FILE: src/webui/eslint.config.js =====
+import js from '@eslint/js';
+import globals from 'globals';
+import tseslint from 'typescript-eslint';
+import reactHooks from 'eslint-plugin-react-hooks';
+import reactRefresh from 'eslint-plugin-react-refresh';
+
+export default tseslint.config(
+  { ignores: ['dist', 'coverage', 'src/api/types.generated.ts'] },
+  {
+    extends: [js.configs.recommended, ...tseslint.configs.recommended],
+    files: ['*@@CMTEND@@*.{ts,tsx}'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      globals: globals.browser,
+    },
+    plugins: {
+      'react-hooks': reactHooks,
+      'react-refresh': reactRefresh,
+    },
+    rules: {
+      ...reactHooks.configs.recommended.rules,
+      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
+      // The generated API types are the contract; hand-widening them with `any` reintroduces the
+      // drift the generator exists to prevent.
+      '@typescript-eslint/no-explicit-any': 'error',
+    },
+  },
+);
+
+===== FILE: src/webui/src/test-setup.ts =====
+import '@testing-library/jest-dom/vitest';
+
+===== FILE: src/webui/src/main.tsx =====
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { BrowserRouter } from 'react-router-dom';
+import { App } from './App';
+import './styles/tokens.css';
+
+const container = document.getElementById('root');
+
+if (!container) {
+  throw new Error('Root container missing from index.html');
+}
+
+createRoot(container).render(
+  <StrictMode>
+    <BrowserRouter>
+      <App />
+    </BrowserRouter>
+  </StrictMode>,
+);
+
+===== FILE: src/webui/src/App.tsx =====
+import { NavLink, Route, Routes, Navigate } from 'react-router-dom';
+import { ErrorBoundary } from './shell/ErrorBoundary';
+import { visibleScreens, type AppRole } from './shell/navigation';
+import { PlaceholderScreen } from './shell/PlaceholderScreen';
+
+/**
+ * Application shell.
+ *
+ * Roles are hard-coded here until T-028b wires MSAL. The shape of the prop is the shape MSAL will
+ * supply, so that task becomes a substitution rather than a rewrite.
+ @@CMTEND@@
+export function App({ roles = ['Router.Invoke', 'Router.Read'] }: { roles?: AppRole[] }) {
+  const screens = visibleScreens(roles);
+
+  return (
+    <div className="app">
+      <header className="app__header">
+        <h1 className="app__title">Governed AI Exchange</h1>
+        <nav className="app__nav">
+          {screens.map((screen) => (
+            <NavLink key={screen.path} to={screen.path}>
+              {screen.title}
+            </NavLink>
+          ))}
+        </nav>
+      </header>
+
+      <main className="app__main">
+        <ErrorBoundary>
+          <Routes>
+            <Route path="/" element={<Navigate to={screens[0]?.path ?? '/scoreboard'} replace />} />
+            {screens.map((screen) => (
+              <Route
+                key={screen.path}
+                path={screen.path}
+                element={<PlaceholderScreen title={screen.title} beat={screen.beat} />}
+              />
+            ))}
+            <Route path="*" element={<PlaceholderScreen title="Not found" />} />
+          </Routes>
+        </ErrorBoundary>
+      </main>
+    </div>
+  );
+}
+
+===== FILE: src/webui/src/styles/tokens.css =====
+/*
+  Projector-first type scale.
+
+  The demo is read from the back of a room, on a projector that will be dimmer and lower contrast
+  than any monitor this was built on. Body text starts at 18px rather than the usual 14, and the
+  scale is deliberately coarse: intermediate sizes are indistinguishable at that distance, so they
+  only create the impression of hierarchy without delivering one.
+
+  Every screen has exactly one hero number. If a screen has two, the audience has to be told which
+  one matters, and by then the moment has passed.
+@@CMTEND@@
+
+:root {
+  --font-sans: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Cascadia Code', ui-monospace, 'SF Mono', monospace;
+
+  --text-hero: 6rem;
+  --text-display: 3rem;
+  --text-heading: 2rem;
+  --text-subheading: 1.5rem;
+  --text-body: 1.125rem;
+  --text-caption: 1rem;
+
+  --ink: #14171a;
+  --ink-muted: #5b6570;
+  --surface: #ffffff;
+  --surface-sunken: #f4f6f8;
+  --border: #d3d9de;
+
+  --accent: #1a56db;
+  --success: #0f7b3e;
+  --warning: #a35a00;
+  --danger: #b3261e;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 1rem;
+  --space-4: 1.5rem;
+  --space-5: 2.5rem;
+
+  --radius: 8px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  color: var(--ink);
+  background: var(--surface-sunken);
+  line-height: 1.5;
+}
+
+.hero-number {
+  font-size: var(--text-hero);
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.app {
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.app__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.app__title {
+  font-size: var(--text-subheading);
+  font-weight: 700;
+  margin: 0;
+}
+
+.app__nav {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.app__nav a {
+  color: var(--ink-muted);
+  text-decoration: none;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius);
+}
+
+.app__nav a[aria-current='page'] {
+  color: var(--accent);
+  background: var(--surface-sunken);
+  font-weight: 600;
+}
+
+.app__main {
+  padding: var(--space-4);
+}
+
+.state {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+  padding: var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.state__title {
+  font-size: var(--text-subheading);
+  font-weight: 600;
+}
+
+.state__detail {
+  color: var(--ink-muted);
+  margin: 0;
+}
+
+.state--error .state__title {
+  color: var(--danger);
+}
+
+.banner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  border-left: 6px solid var(--warning);
+  background: #fff6e6;
+  margin-bottom: var(--space-3);
+}
+
+.banner--danger {
+  border-left-color: var(--danger);
+  background: #fdecea;
+}
+
+.banner--info {
+  border-left-color: var(--accent);
+  background: #eaf0fd;
+}
+
+.banner__detail {
+  color: var(--ink-muted);
+  font-size: var(--text-caption);
+}
+
+.freshness {
+  font-size: var(--text-caption);
+  color: var(--ink-muted);
+  margin: 0 0 var(--space-3);
+}
+
+.freshness--stale {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.button {
+  font: inherit;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+.button:disabled {
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+  border-color: var(--border);
+  cursor: not-allowed;
+}
+
+===== FILE: src/webui/src/shell/ErrorBoundary.tsx =====
+import { Component, type ErrorInfo, type ReactNode } from 'react';
+
+interface Props {
+  children: ReactNode;
+}
+
+interface State {
+  error: Error | null;
+}
+
+/**
+ * Catches render failures so one broken screen does not blank the whole application mid-demo.
+ *
+ * The error is shown rather than swallowed. A white screen invites the audience to conclude the
+ * whole thing is fragile; a named error on one panel, with the rest of the shell intact, reads as
+ * a bug in one place.
+ @@CMTEND@@
+export class ErrorBoundary extends Component<Props, State> {
+  override state: State = { error: null };
+
+  static getDerivedStateFromError(error: Error): State {
+    return { error };
+  }
+
+  override componentDidCatch(error: Error, info: ErrorInfo): void {
+    console.error('Unhandled render error', error, info.componentStack);
+  }
+
+  override render(): ReactNode {
+    if (this.state.error) {
+      return (
+        <div className="state state--error" role="alert">
+          <span className="state__title">This screen failed to render</span>
+          <p className="state__detail">{this.state.error.message}</p>
+          <button type="button" className="button" onClick={() => this.setState({ error: null })}>
+            Try again
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+===== FILE: src/webui/src/shell/PlaceholderScreen.tsx =====
+/**
+ * Stands in for a screen that has not been built yet.
+ *
+ * It names the task that will replace it, so an unfinished screen reached during a rehearsal is
+ * self-explanatory rather than mysterious.
+ @@CMTEND@@
+export function PlaceholderScreen({ title, beat }: { title: string; beat?: number }) {
+  return (
+    <section className="state">
+      <span className="state__title">{title}</span>
+      <p className="state__detail">
+        Not yet implemented.
+        {beat !== undefined && ` This screen serves demo beat ${beat}.`}
+      </p>
+    </section>
+  );
+}
+
+===== FILE: src/webui/src/shell/navigation.ts =====
+import type { ReactNode } from 'react';
+
+/** App roles from the Entra app registration. @@CMTEND@@
+export type AppRole = 'Router.Invoke' | 'Router.Read' | 'Approver';
+
+export interface ScreenDefinition {
+  path: string;
+  title: string;
+  /** Any one of these grants navigation. Empty means every authenticated user. @@CMTEND@@
+  requiredRoles: AppRole[];
+  /** Demo beat this screen serves, for the runbook cross-reference. @@CMTEND@@
+  beat?: number;
+}
+
+/**
+ * The screen inventory from docs/ui-design.md.
+ *
+ * Navigation is hidden for roles that cannot use a screen, but actions inside a screen render
+ * disabled with a stated reason rather than vanishing — the approval beat needs something visible
+ * to refuse, and an invisible control demonstrates nothing.
+ @@CMTEND@@
+export const SCREENS: readonly ScreenDefinition[] = [
+  { path: '/request', title: 'Request console', requiredRoles: ['Router.Invoke'], beat: 2 },
+  { path: '/scoreboard', title: 'Scoreboard', requiredRoles: ['Router.Read'], beat: 3 },
+  { path: '/comparison', title: 'Cost comparison', requiredRoles: ['Router.Read'], beat: 3 },
+  { path: '/decisions', title: 'Decisions', requiredRoles: ['Router.Read'], beat: 3 },
+  { path: '/research', title: 'Research', requiredRoles: ['Router.Invoke'], beat: 7 },
+  { path: '/surveillance', title: 'Surveillance triage', requiredRoles: ['Router.Read'], beat: 4 },
+  { path: '/order-routing', title: 'Order routing', requiredRoles: ['Router.Read'], beat: 6 },
+  { path: '/approvals', title: 'Approvals', requiredRoles: ['Approver'], beat: 6 },
+  { path: '/policy', title: 'Policy sets', requiredRoles: ['Router.Read'], beat: 5 },
+  { path: '/audit', title: 'Audit reconstruction', requiredRoles: ['Router.Read'], beat: 8 },
+] as const;
+
+export function visibleScreens(roles: readonly AppRole[]): ScreenDefinition[] {
+  return SCREENS.filter(
+    (screen) => screen.requiredRoles.length === 0 || screen.requiredRoles.some((r) => roles.includes(r)),
+  );
+}
+
+export function canAccess(screen: ScreenDefinition, roles: readonly AppRole[]): boolean {
+  return screen.requiredRoles.length === 0 || screen.requiredRoles.some((r) => roles.includes(r));
+}
+
+export interface DisabledAction {
+  disabled: boolean;
+  reason?: ReactNode;
+}
+
+/**
+ * Why an action is unavailable, stated rather than implied.
+ *
+ * Segregation of duties is a claim the demo makes out loud; a greyed-out button with no
+ * explanation is indistinguishable from a bug.
+ @@CMTEND@@
+export function requireRole(roles: readonly AppRole[], required: AppRole, action: string): DisabledAction {
+  if (roles.includes(required)) {
+    return { disabled: false };
+  }
+  return {
+    disabled: true,
+    reason: `${action} requires the ${required} role. Your account does not hold it.`,
+  };
+}
+
+===== FILE: src/webui/src/shell/navigation.test.ts =====
+import { describe, it, expect } from 'vitest';
+import { SCREENS, canAccess, requireRole, visibleScreens } from './navigation';
+
+describe('navigation', () => {
+  it('hides screens the caller has no role for', () => {
+    const reader = visibleScreens(['Router.Read']).map((s) => s.path);
+
+    expect(reader).toContain('/scoreboard');
+    expect(reader).not.toContain('/approvals');
+    expect(reader).not.toContain('/request');
+  });
+
+  it('grants the approver the approvals screen', () => {
+    expect(visibleScreens(['Approver']).map((s) => s.path)).toContain('/approvals');
+  });
+
+  it('gives every screen at least one role, so nothing is unintentionally public', () => {
+    expect(SCREENS.every((s) => s.requiredRoles.length > 0)).toBe(true);
+  });
+
+  it('covers every demo beat that has a screen', () => {
+    const beats = new Set(SCREENS.map((s) => s.beat).filter(Boolean));
+    expect([...beats].sort((a, b) => Number(a) - Number(b))).toEqual([2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  it('states why an action is unavailable rather than only disabling it', () => {
+    const blocked = requireRole(['Router.Invoke'], 'Approver', 'Approving this escalation');
+
+    expect(blocked.disabled).toBe(true);
+    expect(String(blocked.reason)).toContain('Approver');
+  });
+
+  it('allows the action when the role is held', () => {
+    expect(requireRole(['Approver'], 'Approver', 'Approving').disabled).toBe(false);
+  });
+
+  it('canAccess agrees with visibleScreens', () => {
+    const roles = ['Router.Read'] as const;
+    for (const screen of SCREENS) {
+      expect(canAccess(screen, roles)).toBe(visibleScreens(roles).includes(screen));
+    }
+  });
+});
+
+===== FILE: src/webui/src/state/asyncState.ts =====
+/**
+ * The five states every screen must handle, plus the one it hopes for.
+ *
+ * They are modelled as a discriminated union rather than a set of booleans because
+ * `isLoading && !error && data?.length` is how a screen ends up rendering an empty table that
+ * looks like a working table with no results. On a projector, in front of an audience, "we have
+ * no data" and "we could not reach the data" must never look the same.
+ @@CMTEND@@
+
+export interface Freshness {
+  /** ISO 8601. Rendered as a visible timestamp, never as a spinner. @@CMTEND@@
+  asOf: string;
+  /** Where the number came from. Shown when it is not the primary source. @@CMTEND@@
+  source?: string;
+}
+
+export type AsyncState<T> =
+  | { status: 'loading' }
+  | { status: 'empty'; message: string }
+  | { status: 'error'; message: string; retry?: () => void }
+  | { status: 'ready'; data: T; freshness: Freshness }
+  /**
+   * Some of the answer, and an explicit list of what is missing.
+   *
+   * Required because the lanes can partially fail: a surveillance batch may triage 480 of 500
+   * alerts. Rendering 480 as though it were the whole batch is the failure mode that matters
+   * most here, because the number looks entirely plausible.
+   @@CMTEND@@
+  | { status: 'partial'; data: T; missing: string[]; freshness: Freshness }
+  /**
+   * A complete answer from a fallback source.
+   *
+   * The scoreboard reads Application Insights and falls back to the Cosmos change feed when the
+   * five-second freshness budget cannot be met. The audience is told which one they are looking
+   * at, because a governance demo that hides its own degradation is arguing against itself.
+   @@CMTEND@@
+  | { status: 'degraded'; data: T; reason: string; freshness: Freshness };
+
+export type AsyncStatus = AsyncState<unknown>['status'];
+
+export const ALL_STATUSES: readonly AsyncStatus[] = [
+  'loading',
+  'empty',
+  'error',
+  'ready',
+  'partial',
+  'degraded',
+] as const;
+
+/** True when the state carries data a screen can render. @@CMTEND@@
+export function hasData<T>(
+  state: AsyncState<T>,
+): state is Extract<AsyncState<T>, { data: T }> {
+  return state.status === 'ready' || state.status === 'partial' || state.status === 'degraded';
+}
+
+/** Data if present, otherwise a caller-supplied fallback. Never throws. @@CMTEND@@
+export function dataOr<T>(state: AsyncState<T>, fallback: T): T {
+  return hasData(state) ? state.data : fallback;
+}
+
+/**
+ * True when the screen is showing something it must qualify out loud.
+ * Drives the banner; also drives whether a screenshot of this screen is honest on its own.
+ @@CMTEND@@
+export function needsQualification<T>(state: AsyncState<T>): boolean {
+  return state.status === 'partial' || state.status === 'degraded';
+}
+
+export function formatFreshness(freshness: Freshness, now: Date = new Date()): string {
+  const asOf = new Date(freshness.asOf);
+  const seconds = Math.max(0, Math.round((now.getTime() - asOf.getTime()) / 1000));
+  const age = seconds < 60 ? `${seconds}s ago` : `${Math.floor(seconds / 60)}m ago`;
+  return freshness.source ? `${age} · ${freshness.source}` : age;
+}
+
+/**
+ * The freshness budget the scoreboard acceptance criterion names. Anything older is stale and
+ * the UI says so rather than quietly showing an old number as a current one.
+ @@CMTEND@@
+export const FRESHNESS_BUDGET_SECONDS = 5;
+
+export function isStale(freshness: Freshness, now: Date = new Date()): boolean {
+  const asOf = new Date(freshness.asOf);
+  return (now.getTime() - asOf.getTime()) / 1000 > FRESHNESS_BUDGET_SECONDS;
+}
+
+===== FILE: src/webui/src/state/AsyncBoundary.tsx =====
+import type { ReactNode } from 'react';
+import type { AsyncState } from './asyncState';
+import { formatFreshness, isStale } from './asyncState';
+
+interface AsyncBoundaryProps<T> {
+  state: AsyncState<T>;
+  children: (data: T) => ReactNode;
+  /** What this screen is showing, used in the empty and error copy. @@CMTEND@@
+  label: string;
+}
+
+/**
+ * Renders the correct state for every screen, so no screen has to remember all six.
+ *
+ * Partial and degraded render the data *and* a qualifying banner rather than replacing the data
+ * with a warning: the audience still needs to see the result, and the presenter still needs to be
+ * able to say what is wrong with it without leaving the screen.
+ @@CMTEND@@
+export function AsyncBoundary<T>({ state, children, label }: AsyncBoundaryProps<T>) {
+  switch (state.status) {
+    case 'loading':
+      return (
+        <div className="state state--loading" role="status" aria-live="polite">
+          <span className="state__title">Loading {label}…</span>
+        </div>
+      );
+
+    case 'empty':
+      return (
+        <div className="state state--empty">
+          <span className="state__title">No {label} yet</span>
+          <p className="state__detail">{state.message}</p>
+        </div>
+      );
+
+    case 'error':
+      return (
+        <div className="state state--error" role="alert">
+          <span className="state__title">Could not load {label}</span>
+          <p className="state__detail">{state.message}</p>
+          {state.retry && (
+            <button type="button" className="button" onClick={state.retry}>
+              Retry
+            </button>
+          )}
+        </div>
+      );
+
+    case 'partial':
+      return (
+        <>
+          <Banner
+            tone="warning"
+            title={`Showing ${label} with ${state.missing.length} item(s) missing`}
+            detail={state.missing.join(', ')}
+          />
+          <FreshnessLine state={state} />
+          {children(state.data)}
+        </>
+      );
+
+    case 'degraded':
+      return (
+        <>
+          <Banner tone="warning" title="Degraded data source" detail={state.reason} />
+          <FreshnessLine state={state} />
+          {children(state.data)}
+        </>
+      );
+
+    case 'ready':
+      return (
+        <>
+          <FreshnessLine state={state} />
+          {children(state.data)}
+        </>
+      );
+  }
+}
+
+function FreshnessLine<T>({
+  state,
+}: {
+  state: Extract<AsyncState<T>, { freshness: { asOf: string } }>;
+}) {
+  const stale = isStale(state.freshness);
+  return (
+    <p className={`freshness${stale ? ' freshness--stale' : ''}`}>
+      Data as of {formatFreshness(state.freshness)}
+      {stale && ' — outside the 5s freshness budget'}
+    </p>
+  );
+}
+
+export function Banner({
+  tone,
+  title,
+  detail,
+}: {
+  tone: 'warning' | 'danger' | 'info';
+  title: string;
+  detail?: string;
+}) {
+  return (
+    <div className={`banner banner--${tone}`} role="status">
+      <strong>{title}</strong>
+      {detail && <span className="banner__detail">{detail}</span>}
+    </div>
+  );
+}
+
+===== FILE: src/webui/src/state/asyncState.test.ts =====
+import { describe, it, expect } from 'vitest';
+import {
+  ALL_STATUSES,
+  dataOr,
+  formatFreshness,
+  hasData,
+  isStale,
+  needsQualification,
+  type AsyncState,
+} from './asyncState';
+
+const now = new Date('2026-09-10T14:00:00Z');
+const fresh = { asOf: '2026-09-10T13:59:58Z' };
+const old = { asOf: '2026-09-10T13:59:00Z' };
+
+describe('async state primitives', () => {
+  it('declares all six states the design requires', () => {
+    expect(ALL_STATUSES).toEqual(['loading', 'empty', 'error', 'ready', 'partial', 'degraded']);
+  });
+
+  it('treats partial and degraded as data-bearing', () => {
+    const partial: AsyncState<number[]> = {
+      status: 'partial',
+      data: [1, 2],
+      missing: ['alert-0003'],
+      freshness: fresh,
+    };
+    const degraded: AsyncState<number[]> = {
+      status: 'degraded',
+      data: [1],
+      reason: 'change feed fallback',
+      freshness: fresh,
+    };
+
+    expect(hasData(partial)).toBe(true);
+    expect(hasData(degraded)).toBe(true);
+    expect(dataOr(partial, [])).toEqual([1, 2]);
+  });
+
+  it('does not treat empty and error as data-bearing', () => {
+    expect(hasData({ status: 'empty', message: 'none' })).toBe(false);
+    expect(hasData({ status: 'error', message: 'boom' })).toBe(false);
+    expect(dataOr<number[]>({ status: 'error', message: 'boom' }, [])).toEqual([]);
+  });
+
+  it('flags partial and degraded as needing qualification, ready as not', () => {
+    expect(needsQualification({ status: 'partial', data: 1, missing: [], freshness: fresh })).toBe(true);
+    expect(needsQualification({ status: 'degraded', data: 1, reason: 'x', freshness: fresh })).toBe(true);
+    expect(needsQualification({ status: 'ready', data: 1, freshness: fresh })).toBe(false);
+  });
+
+  it('measures staleness against the five-second budget', () => {
+    expect(isStale(fresh, now)).toBe(false);
+    expect(isStale(old, now)).toBe(true);
+  });
+
+  it('renders freshness as an age, and names a fallback source when there is one', () => {
+    expect(formatFreshness(fresh, now)).toBe('2s ago');
+    expect(formatFreshness({ ...old, source: 'Cosmos change feed' }, now)).toBe(
+      '1m ago · Cosmos change feed',
+    );
+  });
+});
+
+===== FILE: src/webui/src/state/AsyncBoundary.test.tsx =====
+import { describe, it, expect } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import { AsyncBoundary } from './AsyncBoundary';
+import type { AsyncState } from './asyncState';
+
+const freshness = { asOf: new Date().toISOString() };
+
+function renderState(state: AsyncState<string[]>) {
+  return render(
+    <AsyncBoundary state={state} label="decisions">
+      {(data) => <ul>{data.map((d) => <li key={d}>{d}</li>)}</ul>}
+    </AsyncBoundary>,
+  );
+}
+
+describe('AsyncBoundary', () => {
+  it('distinguishes empty from error', () => {
+    const { unmount } = renderState({ status: 'empty', message: 'Submit a request to begin.' });
+    expect(screen.getByText('No decisions yet')).toBeInTheDocument();
+    unmount();
+
+    renderState({ status: 'error', message: 'Router unreachable.' });
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not load decisions');
+  });
+
+  it('still renders the data when partial, and names what is missing', () => {
+    renderState({
+      status: 'partial',
+      data: ['a', 'b'],
+      missing: ['alert-0003'],
+      freshness,
+    });
+
+    expect(screen.getByText('a')).toBeInTheDocument();
+    expect(screen.getByText(/1 item\(s\) missing/)).toBeInTheDocument();
+    expect(screen.getByText('alert-0003')).toBeInTheDocument();
+  });
+
+  it('still renders the data when degraded, and says why', () => {
+    renderState({
+      status: 'degraded',
+      data: ['a'],
+      reason: 'Application Insights exceeded the freshness budget; using the Cosmos change feed.',
+      freshness,
+    });
+
+    expect(screen.getByText('a')).toBeInTheDocument();
+    expect(screen.getByText('Degraded data source')).toBeInTheDocument();
+  });
+
+  it('shows a data timestamp rather than a spinner once loaded', () => {
+    renderState({ status: 'ready', data: ['a'], freshness });
+    expect(screen.getByText(/Data as of/)).toBeInTheDocument();
+  });
+});
+
+===== FILE: src/webui/src/api/client.ts =====
+import type { RoutingDecision, PolicySet, DataClassification } from './types.generated';
+
+/**
+ * Router API client.
+ *
+ * Note what `RouteRequest` does not have: no model, no vendor, no deployment, no tier. Principle
+ * IV is enforced by the type, because a field that exists is a field that eventually gets used.
+ *
+ * `dataClassification` is required. The server treats an omission as a 400 rather than assuming
+ * Public, and the client type mirrors that so the mistake is caught at compile time instead of
+ * during a live request.
+ @@CMTEND@@
+export interface RouteRequest {
+  prompt: string;
+  dataClassification: DataClassification;
+  costCeilingUsd?: number;
+  policySetId?: string;
+  correlationId?: string;
+}
+
+export interface RouteResponse {
+  correlationId: string;
+  decision: RoutingDecision;
+  output?: string;
+}
+
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+    readonly correlationId?: string,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+export interface ApiClientOptions {
+  baseUrl: string;
+  /** Supplied by the MSAL wiring in T-028b. Returns null when unauthenticated. @@CMTEND@@
+  getAccessToken: () => Promise<string | null>;
+  fetchImpl?: typeof fetch;
+}
+
+export class ApiClient {
+  constructor(private readonly options: ApiClientOptions) {}
+
+  route(request: RouteRequest): Promise<RouteResponse> {
+    return this.send<RouteResponse>('POST', '/v1/route', request);
+  }
+
+  listPolicySets(): Promise<{ policySets: PolicySet[] }> {
+    return this.send<{ policySets: PolicySet[] }>('GET', '/v1/policy-sets');
+  }
+
+  private async send<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const fetchImpl = this.options.fetchImpl ?? fetch;
+    const token = await this.options.getAccessToken();
+
+    const response = await fetchImpl(`${this.options.baseUrl}${path}`, {
+      method,
+      headers: {
+        'content-type': 'application/json',
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+
+    const correlationId = response.headers.get('x-correlation-id') ?? undefined;
+
+    if (!response.ok) {
+      // A refusal is a 200 with outcome RefusedByPolicy, never an error status, so anything
+      // landing here is a genuine failure and must not be retried against a different model.
+      let detail = response.statusText;
+      try {
+        const payload = (await response.json()) as { detail?: string; title?: string };
+        detail = payload.detail ?? payload.title ?? detail;
+      } catch {
+        // Body was not JSON; the status text stands.
+      }
+      throw new ApiError(response.status, detail, correlationId);
+    }
+
+    return (await response.json()) as T;
+  }
+}
+
+/**
+ * True when a response is a governed refusal rather than a result.
+ *
+ * Exists so screens cannot accidentally treat a refusal as an error and offer a retry. Retrying
+ * a refusal is the one behaviour the exchange must never encourage.
+ @@CMTEND@@
+export function isRefusal(response: RouteResponse): boolean {
+  return response.decision.outcome === 'RefusedByPolicy';
+}
+
+===== FILE: src/webui/src/api/client.test.ts =====
+import { describe, it, expect } from 'vitest';
+import { ApiClient, ApiError, isRefusal, type RouteResponse } from './client';
+
+function clientWith(response: Response) {
+  return new ApiClient({
+    baseUrl: 'https://router.internal',
+    getAccessToken: async () => 'token',
+    fetchImpl: async () => response,
+  });
+}
+
+function json(body: unknown, init: ResponseInit = {}) {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'content-type': 'application/json', 'x-correlation-id': 'corr-1' },
+    ...init,
+  });
+}
+
+describe('ApiClient', () => {
+  it('returns a policy refusal as a normal response, not an error', async () => {
+    const body: RouteResponse = {
+      correlationId: 'corr-1',
+      decision: {
+        complexityScore: 0.4,
+        costCeilingUsd: 0.5,
+        outcome: 'RefusedByPolicy',
+        candidateTiers: [],
+        rationale: 'No approved vendor may process Restricted data.',
+        selectedDeployment: null,
+        selectedVendor: null,
+      },
+    };
+
+    const result = await clientWith(json(body)).route({
+      prompt: 'summarise',
+      dataClassification: 'Restricted',
+    });
+
+    expect(isRefusal(result)).toBe(true);
+    expect(result.decision.selectedDeployment).toBeNull();
+  });
+
+  it('does not classify a routed decision as a refusal', async () => {
+    const body: RouteResponse = {
+      correlationId: 'corr-1',
+      decision: {
+        complexityScore: 0.4,
+        costCeilingUsd: 0.5,
+        outcome: 'Routed',
+        candidateTiers: [],
+        rationale: 'Routed to Standard.',
+      },
+    };
+
+    expect(isRefusal(await clientWith(json(body)).route({
+      prompt: 'x',
+      dataClassification: 'Internal',
+    }))).toBe(false);
+  });
+
+  it('raises ApiError with the correlation id on a genuine failure', async () => {
+    const failing = clientWith(
+      json({ detail: 'Router unreachable' }, { status: 503 }),
+    );
+
+    await expect(
+      failing.route({ prompt: 'x', dataClassification: 'Internal' }),
+    ).rejects.toMatchObject({ status: 503, message: 'Router unreachable', correlationId: 'corr-1' });
+  });
+
+  it('surfaces a non-JSON error body without throwing on the parse', async () => {
+    const failing = new ApiClient({
+      baseUrl: 'https://router.internal',
+      getAccessToken: async () => null,
+      fetchImpl: async () => new Response('gateway timeout', { status: 504, statusText: 'Gateway Timeout' }),
+    });
+
+    await expect(failing.route({ prompt: 'x', dataClassification: 'Public' }))
+      .rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+===== FILE: src/webui/src/api/types.generated.ts =====
+// GENERATED FILE -- DO NOT EDIT.
+//
+// Source: src/Fcmr.Router.Decisions/*.cs
+// Regenerate: node scripts/generate-api-types.mjs
+// CI asserts this file is in sync via: node scripts/generate-api-types.mjs --check
+
+export type ModelTier =
+  | 'Economy'
+  | 'Standard'
+  | 'Premium';
+
+export const ModelTierValues: readonly ModelTier[] = [
+  'Economy',
+  'Standard',
+  'Premium',
+] as const;
+
+export type RoutingOutcome =
+  | 'Routed'
+  | 'Downgraded'
+  | 'Denied'
+  | 'RefusedByPolicy';
+
+export const RoutingOutcomeValues: readonly RoutingOutcome[] = [
+  'Routed',
+  'Downgraded',
+  'Denied',
+  'RefusedByPolicy',
+] as const;
+
+export type ModelVendor =
+  | 'AzureOpenAI'
+  | 'Anthropic'
+  | 'XAI'
+  | 'OpenWeight';
+
+export const ModelVendorValues: readonly ModelVendor[] = [
+  'AzureOpenAI',
+  'Anthropic',
+  'XAI',
+  'OpenWeight',
+] as const;
+
+export type ServingMode =
+  | 'Serverless'
+  | 'ManagedCompute';
+
+export const ServingModeValues: readonly ServingMode[] = [
+  'Serverless',
+  'ManagedCompute',
+] as const;
+
+export type DataClassification =
+  | 'Public'
+  | 'Internal'
+  | 'Confidential'
+  | 'Restricted';
+
+export const DataClassificationValues: readonly DataClassification[] = [
+  'Public',
+  'Internal',
+  'Confidential',
+  'Restricted',
+] as const;
+
+export type PolicyExclusionKind =
+  | 'VendorNotApproved'
+  | 'ClassificationExceeded'
+  | 'RegionNotPermitted'
+  | 'PolicyCostCeiling';
+
+export const PolicyExclusionKindValues: readonly PolicyExclusionKind[] = [
+  'VendorNotApproved',
+  'ClassificationExceeded',
+  'RegionNotPermitted',
+  'PolicyCostCeiling',
+] as const;
+
+export interface RoutingDecision {
+  complexityScore: number;
+  costCeilingUsd: number;
+  outcome: RoutingOutcome;
+  selectedTier?: ModelTier | null;
+  selectedDeployment?: string | null;
+  candidateTiers: TierCandidate[];
+  rationale: string;
+  policySetId?: string | null;
+  policySetVersion?: number | null;
+  dataClassification?: DataClassification | null;
+  selectedVendor?: ModelVendor | null;
+  policyExclusions?: PolicyExclusion[];
+}
+
+export interface TierCandidate {
+  tier: ModelTier;
+  deployment: string;
+  projectedCostUsd: number;
+  vendor?: ModelVendor;
+  selected?: boolean;
+  rejectedReason?: string | null;
+}
+
+export interface PolicyExclusion {
+  deployment: string;
+  vendor: ModelVendor;
+  kind: PolicyExclusionKind;
+  reason: string;
+}
+
+export interface PolicySet {
+  id: string;
+  businessUnit: string;
+  displayName?: string;
+  approvedVendors: ModelVendor[];
+  maxClassification: Partial<Record<ModelVendor, DataClassification>>;
+  allowedRegions?: string[];
+  maxCostPerRequestUsd?: number;
+  permitsRestrictedData?: boolean;
+  version?: number;
+  updatedBy?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface PolicySetFieldChange {
+  field: string;
+  from: string;
+  to: string;
+}
+
+===== FILE: scripts/diagrams/diagram-kit.mjs =====
+// diagram-kit.mjs
+//
+// Deterministic Excalidraw element factory + layout helpers.
+// Node built-ins only. No randomness, no clocks: every "random" field comes from a
+// counter-based PRNG seeded with a fixed constant, and `updated` is the constant 1.
+
+const PRNG_SEED = 0x5f3a91c7;
+const UPDATED = 1;
+
+/** Counter-based PRNG (splitmix32). Deterministic across runs and platforms. @@CMTEND@@
+export function createRng(seed = PRNG_SEED) {
+  let counter = seed >>> 0;
+  return function next() {
+    counter = (counter + 0x9e3779b9) >>> 0;
+    let z = counter;
+    z = Math.imul(z ^ (z >>> 16), 0x21f0aaad) >>> 0;
+    z = Math.imul(z ^ (z >>> 15), 0x735a2d97) >>> 0;
+    z = (z ^ (z >>> 15)) >>> 0;
+    return z % 2147483647;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Palette — Excalidraw standard swatches only.
+// ---------------------------------------------------------------------------
+
+export const C = {
+  ink: '#1e1e1e',
+  red: '#e03131',
+  green: '#2f9e44',
+  blue: '#1971c2',
+  orange: '#f08c00',
+  violet: '#9c36b5',
+  transparent: 'transparent',
+  bgRed: '#ffc9c9',
+  bgGreen: '#b2f2bb',
+  bgBlue: '#a5d8ff',
+  bgYellow: '#ffec99',
+  bgViolet: '#eebefa',
+  white: '#ffffff',
+};
+
+// ---------------------------------------------------------------------------
+// Type metrics
+// ---------------------------------------------------------------------------
+
+export const FONT = { hand: 1, helvetica: 2, mono: 3 };
+export const LINE_HEIGHT = 1.25;
+export const BOX_PAD = 16;
+
+const CHAR_RATIO = { 1: 0.58, 2: 0.55, 3: 0.62 };
+
+export function charWidth(fontSize, fontFamily = FONT.helvetica) {
+  return fontSize * (CHAR_RATIO[fontFamily] ?? 0.55);
+}
+
+export function measureLine(line, fontSize, fontFamily = FONT.helvetica) {
+  return line.length * charWidth(fontSize, fontFamily);
+}
+
+/** Greedy word wrap using the character-width estimator. Honours explicit \n. @@CMTEND@@
+export function wrapText(text, fontSize, maxWidth, fontFamily = FONT.helvetica) {
+  const cw = charWidth(fontSize, fontFamily);
+  const maxChars = Math.max(1, Math.floor(maxWidth / cw));
+  const out = [];
+  for (const paragraph of String(text).split('\n')) {
+    if (paragraph.length === 0) {
+      out.push('');
+      continue;
+    }
+    let line = '';
+    for (const word of paragraph.split(' ')) {
+      const candidate = line.length === 0 ? word : `${line} ${word}`;
+      if (candidate.length <= maxChars) {
+        line = candidate;
+        continue;
+      }
+      if (line.length > 0) out.push(line);
+      // Hard-break tokens longer than the line box (e.g. long identifiers).
+      let rest = word;
+      while (rest.length > maxChars) {
+        out.push(rest.slice(0, maxChars));
+        rest = rest.slice(maxChars);
+      }
+      line = rest;
+    }
+    out.push(line);
+  }
+  return out;
+}
+
+export function textBlockSize(lines, fontSize, fontFamily = FONT.helvetica) {
+  const width = lines.reduce((m, l) => Math.max(m, measureLine(l, fontSize, fontFamily)), 0);
+  return { width, height: lines.length * fontSize * LINE_HEIGHT };
+}
+
+// ---------------------------------------------------------------------------
+// Layout: layer / column model
+// ---------------------------------------------------------------------------
+
+/**
+ * A column ruler. Columns are computed once from a width + gap, never hand-placed.
+ @@CMTEND@@
+export function columns({ x = 0, count, width, gap }) {
+  const cols = [];
+  for (let i = 0; i < count; i += 1) cols.push({ x: x + i * (width + gap), width });
+  return {
+    cols,
+    at: (i) => cols[i],
+    span: (i, n) => ({ x: cols[i].x, width: n * width + (n - 1) * gap }),
+    totalWidth: count * width + (count - 1) * gap,
+  };
+}
+
+/** A vertical stack cursor. Rows advance by an explicit height + gap. @@CMTEND@@
+export function stack(y, gap = 40) {
+  let cursor = y;
+  return {
+    next(height) {
+      const top = cursor;
+      cursor += height + gap;
+      return top;
+    },
+    skip(amount) {
+      cursor += amount;
+    },
+    get y() {
+      return cursor;
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Scene
+// ---------------------------------------------------------------------------
+
+export class Scene {
+  constructor({ name, seed = PRNG_SEED } = {}) {
+    this.name = name;
+    this.elements = [];
+    this.rng = createRng(seed);
+    this.idCounter = 0;
+    this.byId = new Map();
+  }
+
+  id(prefix) {
+    this.idCounter += 1;
+    return `${prefix}-${String(this.idCounter).padStart(3, '0')}`;
+  }
+
+  base(type, props) {
+    const el = {
+      id: props.id,
+      type,
+      x: round(props.x),
+      y: round(props.y),
+      width: round(props.width),
+      height: round(props.height),
+      angle: 0,
+      strokeColor: props.strokeColor ?? C.ink,
+      backgroundColor: props.backgroundColor ?? C.transparent,
+      fillStyle: props.fillStyle ?? 'solid',
+      strokeWidth: props.strokeWidth ?? 2,
+      strokeStyle: props.strokeStyle ?? 'solid',
+      roughness: props.roughness ?? 0,
+      opacity: 100,
+      groupIds: [],
+      frameId: null,
+      roundness: props.roundness === undefined ? { type: 3 } : props.roundness,
+      seed: this.rng(),
+      versionNonce: this.rng(),
+      version: 1,
+      isDeleted: false,
+      boundElements: props.boundElements ?? [],
+      updated: UPDATED,
+      link: null,
+      locked: false,
+    };
+    this.elements.push(el);
+    this.byId.set(el.id, el);
+    return el;
+  }
+
+  /** Free-floating text. Width/height are derived from the estimator. @@CMTEND@@
+  text(
+    content,
+    {
+      x,
+      y,
+      width,
+      fontSize = 16,
+      fontFamily = FONT.helvetica,
+      color = C.ink,
+      align = 'left',
+      id,
+    } = {},
+  ) {
+    const maxWidth = width ?? measureLine(String(content).split('\n')[0], fontSize, fontFamily) + 1;
+    const lines = wrapText(content, fontSize, maxWidth, fontFamily);
+    const size = textBlockSize(lines, fontSize, fontFamily);
+    const el = this.base('text', {
+      id: id ?? this.id('txt'),
+      x,
+      y,
+      width: width ?? size.width,
+      height: size.height,
+      strokeColor: color,
+      backgroundColor: C.transparent,
+      roundness: null,
+      strokeWidth: 2,
+    });
+    Object.assign(el, {
+      text: lines.join('\n'),
+      originalText: String(content),
+      fontSize,
+      fontFamily,
+      textAlign: align,
+      verticalAlign: 'top',
+      containerId: null,
+      lineHeight: LINE_HEIGHT,
+    });
+    return el;
+  }
+
+  /**
+   * Height a box needs for its title + body at a given width.
+   * Layout code calls this before placing a row so siblings share a height.
+   @@CMTEND@@
+  static measure(spec, width) {
+    const titleSize = spec.titleSize ?? 20;
+    const bodySize = spec.bodySize ?? 16;
+    const inner = width - 2 * BOX_PAD;
+    let h = BOX_PAD * 2;
+    if (spec.title) {
+      const lines = wrapText(spec.title, titleSize, inner, spec.titleFamily ?? FONT.helvetica);
+      h += lines.length * titleSize * LINE_HEIGHT;
+    }
+    if (spec.body) {
+      const lines = wrapText(spec.body, bodySize, inner, spec.bodyFamily ?? FONT.helvetica);
+      h += 10 + lines.length * bodySize * LINE_HEIGHT;
+    }
+    return Math.max(h, 64);
+  }
+
+  /**
+   * A labelled box: rectangle + bound title text (+ optional free body text inside).
+   @@CMTEND@@
+  box(spec) {
+    const {
+      x,
+      y,
+      width,
+      height,
+      title,
+      body,
+      stroke = C.ink,
+      background = C.transparent,
+      fillStyle = 'solid',
+      strokeStyle = 'solid',
+      strokeWidth = 2,
+      titleSize = 20,
+      bodySize = 16,
+      titleFamily = FONT.helvetica,
+      bodyFamily = FONT.helvetica,
+      titleColor,
+      bodyColor,
+    } = spec;
+
+    const h = height ?? Scene.measure(spec, width);
+    const rectId = this.id('box');
+    const inner = width - 2 * BOX_PAD;
+
+    const rect = this.base('rectangle', {
+      id: rectId,
+      x,
+      y,
+      width,
+      height: h,
+      strokeColor: stroke,
+      backgroundColor: background,
+      fillStyle,
+      strokeStyle,
+      strokeWidth,
+      roundness: { type: 3 },
+    });
+
+    const titleLines = wrapText(title, titleSize, inner, titleFamily);
+    const titleSizeBox = textBlockSize(titleLines, titleSize, titleFamily);
+    const titleId = this.id('txt');
+    const centred = !body;
+    const titleY = centred ? y + (h - titleSizeBox.height) / 2 : y + BOX_PAD;
+
+    const titleEl = this.base('text', {
+      id: titleId,
+      x: x + BOX_PAD,
+      y: titleY,
+      width: inner,
+      height: titleSizeBox.height,
+      strokeColor: titleColor ?? C.ink,
+      backgroundColor: C.transparent,
+      roundness: null,
+    });
+    Object.assign(titleEl, {
+      text: titleLines.join('\n'),
+      originalText: title,
+      fontSize: titleSize,
+      fontFamily: titleFamily,
+      textAlign: 'center',
+      verticalAlign: centred ? 'middle' : 'top',
+      containerId: rectId,
+      lineHeight: LINE_HEIGHT,
+    });
+    rect.boundElements.push({ type: 'text', id: titleId });
+
+    if (body) {
+      const bodyY = titleY + titleSizeBox.height + 10;
+      this.text(body, {
+        x: x + BOX_PAD,
+        y: bodyY,
+        width: inner,
+        fontSize: bodySize,
+        fontFamily: bodyFamily,
+        color: bodyColor ?? C.ink,
+        align: 'center',
+      });
+    }
+
+    return { id: rectId, x, y, width, height: h, cx: x + width / 2, cy: y + h / 2 };
+  }
+
+  /**
+   * A grouping frame: a rectangle with a label sitting on its top-left inside edge.
+   * Groups are containers; children are placed inside them by the caller.
+   @@CMTEND@@
+  group(spec) {
+    const {
+      x,
+      y,
+      width,
+      height,
+      label,
+      stroke = C.ink,
+      background = C.transparent,
+      fillStyle = 'solid',
+      strokeStyle = 'solid',
+      strokeWidth = 2,
+      labelSize = 20,
+      labelColor,
+      sublabel,
+      sublabelSize = 16,
+    } = spec;
+
+    const rectId = this.id('grp');
+    this.base('rectangle', {
+      id: rectId,
+      x,
+      y,
+      width,
+      height,
+      strokeColor: stroke,
+      backgroundColor: background,
+      fillStyle,
+      strokeStyle,
+      strokeWidth,
+      roundness: { type: 3 },
+    });
+
+    if (label) {
+      const el = this.text(label, {
+        x: x + BOX_PAD,
+        y: y + 12,
+        width: width - 2 * BOX_PAD,
+        fontSize: labelSize,
+        color: labelColor ?? stroke,
+        align: 'left',
+      });
+      if (sublabel) {
+        this.text(sublabel, {
+          x: x + BOX_PAD,
+          y: y + 12 + el.height + 4,
+          width: width - 2 * BOX_PAD,
+          fontSize: sublabelSize,
+          color: labelColor ?? stroke,
+          align: 'left',
+        });
+      }
+    }
+
+    return { id: rectId, x, y, width, height, cx: x + width / 2, cy: y + height / 2 };
+  }
+
+  /** Anchor point on a box edge. @@CMTEND@@
+  static anchor(b, side) {
+    switch (side) {
+      case 'left':
+        return { x: b.x, y: b.y + b.height / 2 };
+      case 'right':
+        return { x: b.x + b.width, y: b.y + b.height / 2 };
+      case 'top':
+        return { x: b.x + b.width / 2, y: b.y };
+      case 'bottom':
+        return { x: b.x + b.width / 2, y: b.y + b.height };
+      default:
+        return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+    }
+  }
+
+  static autoSides(a, b) {
+    const dx = b.cx - a.cx;
+    const dy = b.cy - a.cy;
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      return dx >= 0 ? ['right', 'left'] : ['left', 'right'];
+    }
+    return dy >= 0 ? ['bottom', 'top'] : ['top', 'bottom'];
+  }
+
+  /**
+   * A bound arrow between two boxes. Both endpoints are updated to reference it.
+   @@CMTEND@@
+  arrow(from, to, opts = {}) {
+    const {
+      color = C.ink,
+      strokeWidth = 2,
+      strokeStyle = 'solid',
+      gap = 8,
+      label,
+      labelSize = 16,
+      labelColor,
+      labelWidth = 240,
+      labelDx = 0,
+      labelDy = 0,
+      elbow = null, // 'h' | 'v' — route through one right angle
+      endArrowhead = 'arrow',
+      startArrowhead = null,
+    } = opts;
+
+    let [sSide, eSide] = opts.sides ?? Scene.autoSides(from, to);
+    const start = Scene.anchor(from, sSide);
+    const end = Scene.anchor(to, eSide);
+
+    const off = (p, side, d) => {
+      if (side === 'left') return { x: p.x - d, y: p.y };
+      if (side === 'right') return { x: p.x + d, y: p.y };
+      if (side === 'top') return { x: p.x, y: p.y - d };
+      return { x: p.x, y: p.y + d };
+    };
+    const s = off(start, sSide, gap);
+    const e = off(end, eSide, gap);
+
+    const pts = [[0, 0]];
+    if (sSide === eSide) {
+      // Same-side connection: route out perpendicular, travel, and come back in.
+      const detour = opts.detour ?? 70;
+      const dir = sSide === 'left' || sSide === 'top' ? -1 : 1;
+      const horiz = sSide === 'left' || sSide === 'right';
+      const reach = dir * detour;
+      if (horiz) {
+        pts.push([reach, 0], [reach, e.y - s.y], [e.x - s.x, e.y - s.y]);
+      } else {
+        pts.push([0, reach], [e.x - s.x, reach], [e.x - s.x, e.y - s.y]);
+      }
+    } else {
+      if (elbow === 'h') pts.push([e.x - s.x, 0]);
+      if (elbow === 'v') pts.push([0, e.y - s.y]);
+      pts.push([e.x - s.x, e.y - s.y]);
+    }
+
+    const xs = pts.map((p) => p[0]);
+    const ys = pts.map((p) => p[1]);
+    const arrowId = this.id('arr');
+
+    const el = this.base('arrow', {
+      id: arrowId,
+      x: s.x,
+      y: s.y,
+      width: Math.max(...xs) - Math.min(...xs),
+      height: Math.max(...ys) - Math.min(...ys),
+      strokeColor: color,
+      backgroundColor: C.transparent,
+      strokeWidth,
+      strokeStyle,
+      roundness: { type: 2 },
+    });
+    Object.assign(el, {
+      points: pts.map(([px, py]) => [round(px), round(py)]),
+      lastCommittedPoint: null,
+      startBinding: { elementId: from.id, focus: 0, gap },
+      endBinding: { elementId: to.id, focus: 0, gap },
+      startArrowhead,
+      endArrowhead,
+      elbowed: false,
+    });
+
+    this.byId.get(from.id).boundElements.push({ type: 'arrow', id: arrowId });
+    this.byId.get(to.id).boundElements.push({ type: 'arrow', id: arrowId });
+
+    if (label) {
+      // Anchor the label at the centroid of the routed polyline, so a detoured
+      // arrow labels itself where it actually runs. `labelAt` overrides absolutely.
+      const cxRel = pts.reduce((a, p) => a + p[0], 0) / pts.length;
+      const cyRel = pts.reduce((a, p) => a + p[1], 0) / pts.length;
+      const mid = opts.labelAt ?? { x: s.x + cxRel, y: s.y + cyRel };
+      const lines = wrapText(label, labelSize, labelWidth);
+      const size = textBlockSize(lines, labelSize);
+      this.text(label, {
+        x: mid.x - labelWidth / 2 + labelDx,
+        y: mid.y - size.height / 2 + labelDy,
+        width: labelWidth,
+        fontSize: labelSize,
+        color: labelColor ?? color,
+        align: 'center',
+      });
+    }
+
+    return { id: arrowId };
+  }
+
+  /** Diagram title + one-sentence subtitle stating the conclusion. @@CMTEND@@
+  header({ x, y, width, title, subtitle }) {
+    const t = this.text(title, {
+      x,
+      y,
+      width,
+      fontSize: 28,
+      color: C.ink,
+      align: 'left',
+    });
+    const s = this.text(subtitle, {
+      x,
+      y: y + t.height + 10,
+      width,
+      fontSize: 20,
+      color: C.blue,
+      align: 'left',
+    });
+    return { height: t.height + 10 + s.height };
+  }
+
+  /** A legend. Every diagram must have one; colour without a key is decoration. @@CMTEND@@
+  legend({ x, y, width, items, title = 'Legend — what the colours mean' }) {
+    const rowH = 34;
+    const swatch = 26;
+    const height = 16 + 24 + 12 + items.length * rowH + 12;
+    const frame = this.group({
+      x,
+      y,
+      width,
+      height,
+      label: title,
+      labelSize: 20,
+      stroke: C.ink,
+      background: C.white,
+      strokeWidth: 2,
+    });
+    let cursor = y + 16 + 24 + 14;
+    for (const item of items) {
+      this.base('rectangle', {
+        id: this.id('swa'),
+        x: x + BOX_PAD,
+        y: cursor,
+        width: swatch,
+        height: swatch,
+        strokeColor: item.stroke ?? C.ink,
+        backgroundColor: item.background ?? C.transparent,
+        fillStyle: 'solid',
+        strokeWidth: item.strokeWidth ?? 2,
+        strokeStyle: item.strokeStyle ?? 'solid',
+        roundness: { type: 3 },
+      });
+      this.text(item.text, {
+        x: x + BOX_PAD + swatch + 12,
+        y: cursor + 3,
+        width: width - 2 * BOX_PAD - swatch - 12,
+        fontSize: 16,
+        color: C.ink,
+        align: 'left',
+      });
+      cursor += rowH;
+    }
+    return frame;
+  }
+
+  bounds() {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const el of this.elements) {
+      let x0 = el.x;
+      let y0 = el.y;
+      let x1 = el.x + el.width;
+      let y1 = el.y + el.height;
+      if (Array.isArray(el.points)) {
+        // Linear elements store points relative to x/y and may run negative.
+        const xs = el.points.map((p) => el.x + p[0]);
+        const ys = el.points.map((p) => el.y + p[1]);
+        x0 = Math.min(...xs);
+        x1 = Math.max(...xs);
+        y0 = Math.min(...ys);
+        y1 = Math.max(...ys);
+      }
+      minX = Math.min(minX, x0);
+      minY = Math.min(minY, y0);
+      maxX = Math.max(maxX, x1);
+      maxY = Math.max(maxY, y1);
+    }
+    return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
+  }
+
+  toDocument() {
+    return {
+      type: 'excalidraw',
+      version: 2,
+      source: 'https://github.com/briandenicola/foundry-capital-markets-router',
+      elements: this.elements,
+      appState: { gridSize: null, viewBackgroundColor: '#ffffff' },
+      files: {},
+    };
+  }
+
+  toJSON() {
+    return `${JSON.stringify(this.toDocument(), null, 2)}\n`;
+  }
+}
+
+function round(n) {
+  return Math.round(n * 100) / 100;
+}
+
+export { round, UPDATED, PRNG_SEED };
+
+===== FILE: scripts/diagrams/diagrams.mjs =====
+// diagrams.mjs
+//
+// The four diagrams. Every fact here is traceable to the repository:
+//   infrastructure/*.tf, apps/*.tf, src/Fcmr.Router.Decisions/*.cs,
+//   docs/architecture.md, docs/agent-architecture.md, docs/ui-design.md,
+//   docs/demo-runbook.md, .specify/memory/constitution.md,
+//   specs/001-router-core/**, specs/002-governed-exchange/**.
+
+import { Scene, C, FONT, columns } from './diagram-kit.mjs';
+
+const MONO = FONT.mono;
+
+/** Uniform height for a row of sibling boxes, computed from the widest content. @@CMTEND@@
+function rowHeight(items, colWidth) {
+  return Math.max(...items.map((s) => Scene.measure(s, colWidth)));
+}
+
+/** Place a row of boxes across a column ruler at a shared height. @@CMTEND@@
+function placeRow(scene, ruler, y, items, common = {}) {
+  const w = ruler.at(0).width;
+  const specs = items.map((s) => ({ ...common, ...s }));
+  const h = rowHeight(specs, w);
+  return specs.map((s, i) => scene.box({ ...s, x: ruler.at(i).x, y, width: w, height: h }));
+}
+
+const LEGEND_PRIVATE = {
+  stroke: C.green,
+  background: C.bgGreen,
+  text: 'Inside the VNet / private endpoint only. No public data-plane endpoint.',
+};
+const LEGEND_PUBLIC = {
+  stroke: C.red,
+  background: C.bgRed,
+  text: 'Public or refusal / denial. The single public surface, or a governed "no".',
+};
+const LEGEND_HUMAN = {
+  stroke: C.orange,
+  background: C.bgYellow,
+  text: 'Human-in-the-loop. A person, holding a distinct identity, decides.',
+};
+const LEGEND_PREVIEW = {
+  stroke: C.violet,
+  background: C.bgViolet,
+  text: 'Preview Azure capability (azapi, preview API version).',
+};
+const LEGEND_CHOKEPOINT = {
+  stroke: C.blue,
+  background: C.bgBlue,
+  text: 'Governed chokepoint / deterministic code the exchange depends on.',
+};
+const LEGEND_ABSENT = {
+  stroke: C.red,
+  background: C.white,
+  strokeStyle: 'dashed',
+  text: 'Described in docs but ABSENT from infrastructure/*.tf and apps/*.tf.',
+};
+
+// ===========================================================================
+// 01 — Platform topology
+// ===========================================================================
+
+export function platformTopology() {
+  const scene = new Scene({ name: '01-platform-topology', seed: 0x11a2b3c4 });
+  const X0 = 80;
+  const W = 2560;
+  const INNER_X = X0 + 40;
+  const INNER_W = W - 80;
+
+  scene.header({
+    x: X0,
+    y: 60,
+    width: W,
+    title: '01 · Governed AI Exchange — private Azure platform topology',
+    subtitle:
+      'Conclusion: every data plane in this system — Cosmos, AI Search, Key Vault, the registry and Microsoft Foundry — is reachable only from inside the VNet, and the sole public surface is the demo UI front door.',
+  });
+
+  // ---- Public zone -------------------------------------------------------
+  const pubY = 200;
+  const pubCols = columns({ x: INNER_X, count: 3, width: (INNER_W - 2 * 40) / 3, gap: 40 });
+  const pubItems = [
+    {
+      title: 'Demo operator (browser)',
+      body: 'Entra ID interactive sign-in via MSAL.\nTwo identities on the day: one holding\nApprover, one deliberately without it.',
+    },
+    {
+      title: 'Microsoft Entra ID  ·  identity plane',
+      body:
+        'apps/entra.tf — one app registration, three app roles:\nRouter.Invoke (Application), Router.Read (User+App), Approver (User).\nDeliberately a public endpoint: it is an identity plane, not a data plane.',
+    },
+    {
+      title: 'Azure control plane  ·  Terraform',
+      body:
+        'Two stacks, remote state: infrastructure/ (platform)\nand apps/ (workloads). Control-plane access is not\nwhat Principle II constrains — data planes are.',
+    },
+  ];
+  const pubBoxY = pubY + 76;
+  const pubH = rowHeight(pubItems, pubCols.at(0).width);
+  scene.group({
+    x: X0,
+    y: pubY,
+    width: W,
+    height: 76 + pubH + 34,
+    label: 'PUBLIC INTERNET',
+    sublabel: 'Nothing below this line reaches an Azure data plane directly.',
+    stroke: C.red,
+    background: C.bgRed,
+    fillStyle: 'solid',
+    strokeWidth: 3,
+    strokeStyle: 'dashed',
+  });
+  const pub = placeRow(scene, pubCols, pubBoxY, pubItems, {
+    stroke: C.red,
+    background: C.white,
+    strokeWidth: 2,
+  });
+  const pubZoneBottom = pubY + 76 + pubH + 34;
+
+  // ---- VNet --------------------------------------------------------------
+  const vnetY = pubZoneBottom + 150;
+  const vContentTop = vnetY + 104;
+
+  // Left: container-apps subnet
+  const caSubX = INNER_X;
+  const caSubW = 1180;
+  const caeX = caSubX + 30;
+  const caeW = caSubW - 60;
+  const appX = caeX + 25;
+  const appW = caeW - 50;
+  const laneCols = columns({ x: appX, count: 3, width: (appW - 2 * 40) / 3, gap: 40 });
+
+  const webuiSpec = {
+    title: 'webui  ·  Vite / React  ·  EXTERNAL ingress',
+    body:
+      'apps/container-apps.tf — the only container app with\nexternal_enabled = true. This is the single public surface\nallowed by Principle II.',
+  };
+  const routerSpec = {
+    title: 'router-service  ·  the chokepoint',
+    body:
+      'The only workload identity holding "Azure AI Developer" on the\nFoundry project (apps/roles.tf). Every model call in the system\npasses through POST /v1/route. Internal ingress only.',
+  };
+  const laneSpecs = [
+    {
+      title: 'research-service',
+      body: 'Search Index Data Reader.\nNo Foundry role assignment.',
+    },
+    {
+      title: 'surveillance-service',
+      body: 'Search Index Data Reader.\nNo Foundry role assignment.',
+    },
+    {
+      title: 'orderrouting-service',
+      body: 'Simulated OMS only.\nNo Foundry role assignment.',
+    },
+  ];
+
+  const hWebui = Scene.measure(webuiSpec, appW);
+  const hRouter = Scene.measure(routerSpec, appW);
+  const hLane = rowHeight(laneSpecs, laneCols.at(0).width);
+  const caeH = 76 + hWebui + 40 + hRouter + 40 + hLane + 30;
+  const caSubH = 82 + caeH + 30;
+
+  // Right: private-endpoints subnet
+  const peSubX = caSubX + caSubW + 240;
+  const peSubW = INNER_X + INNER_W - peSubX;
+  const peCols = columns({ x: peSubX + 30, count: 2, width: (peSubW - 60 - 40) / 2, gap: 40 });
+  const peItems = [
+    { title: 'cosmos-pe', body: 'group: Sql\nprivatelink.documents.azure.com' },
+    { title: 'search-pe', body: 'group: searchService\nprivatelink.search.windows.net' },
+    { title: 'keyvault-pe', body: 'group: vault\nprivatelink.vaultcore.azure.net' },
+    { title: 'registry-pe', body: 'group: registry\nprivatelink.azurecr.io' },
+    { title: 'foundry-pe', body: 'group: account\nprivatelink.services.ai.azure.com' },
+    {
+      title: 'Private DNS  ·  6 zones',
+      body: 'All six linked to the VNet\n(privatelink.openai.azure.com is\ncreated but has no endpoint).',
+      stroke: C.blue,
+      background: C.bgBlue,
+    },
+  ];
+  const peRowH = [0, 1, 2].map((r) =>
+    rowHeight(peItems.slice(r * 2, r * 2 + 2), peCols.at(0).width),
+  );
+  const peSubH = 82 + peRowH[0] + 40 + peRowH[1] + 40 + peRowH[2] + 30;
+
+  const subnetRowH = Math.max(caSubH, peSubH);
+
+  // Data planes row
+  const dpY = vContentTop + subnetRowH + 70;
+  const dpX = INNER_X;
+  const dpW = INNER_W;
+  const dpInnerX = dpX + 30;
+  const dpInnerW = dpW - 60;
+  const dataCols = columns({ x: dpInnerX, count: 4, width: (dpInnerW - 3 * 40) / 4, gap: 40 });
+  const dataItems = [
+    {
+      title: 'Cosmos DB (SQL)',
+      body:
+        'public_network_access_enabled = false\nlocal_authentication_enabled = false\n6 containers: routerDecisions, approvals,\nsurveillanceAlerts, researchQueries,\norderProposals, auditEvents',
+    },
+    {
+      title: 'Azure AI Search',
+      body:
+        'public_network_access_enabled = false\nlocal_authentication_enabled = false\nSystem-assigned identity.\nStandard SKU. Research corpus.',
+    },
+    {
+      title: 'Key Vault',
+      body:
+        'public_network_access_enabled = false\nRBAC authorization, network_acls Deny.\nHolds only what cannot be managed-\nidentity authenticated (Principle VIII).',
+    },
+    {
+      title: 'Container Registry (Premium)',
+      body:
+        'public_network_access_enabled = false\nadmin_enabled = false\nanonymous_pull_enabled = false\nPremium SKU is required for private link.',
+    },
+  ];
+  const dataH = rowHeight(dataItems, dataCols.at(0).width);
+
+  const fndX = dpInnerX;
+  const fndW = 1200;
+  const apimX = fndX + fndW + 40;
+  const apimW = dpInnerX + dpInnerW - apimX;
+  const fndInnerX = fndX + 30;
+  const fndInnerW = fndW - 60;
+  const fndProjSpec = {
+    title: 'Foundry project  ·  fcmr-*-proj  ·  PREVIEW API',
+    body:
+      'accounts/projects@2026-05-15-preview, system-assigned identity.\nHosted agents run under this project identity.',
+    stroke: C.violet,
+    background: C.bgViolet,
+  };
+  const fndCols = columns({ x: fndInnerX, count: 2, width: (fndInnerW - 40) / 2, gap: 40 });
+  const fndDeploySpecs = [
+    {
+      title: 'Serverless deployments',
+      body:
+        'gpt-5.4-mini · gpt-5.4 · gpt-5.6-sol\nclaude-sonnet-4-5 (Anthropic)\ngrok-4.3 (xAI)\nBilled per token.',
+      stroke: C.green,
+      background: C.bgGreen,
+    },
+    {
+      title: 'Managed compute  ·  PREVIEW',
+      body:
+        'managedComputeDeployments@2026-05-15-preview\nnvidia-nemotron-3-nano-30b-a3b-fp8 on H100_80GB,\nGlobalManagedCompute capacity 1.\nThe only destination cleared for Restricted data.\n60m timeouts — provision ahead of the demo.',
+      stroke: C.violet,
+      background: C.bgViolet,
+    },
+  ];
+  const fndDeployH = rowHeight(fndDeploySpecs, fndCols.at(0).width);
+  const fndProjH = Scene.measure(fndProjSpec, fndInnerW);
+  const fndH = 82 + fndProjH + 40 + fndDeployH + 30;
+
+  const apimSpec = {
+    title: 'APIM as AI gateway  —  NOT IN TERRAFORM',
+    body:
+      'docs/architecture.md and the constitution both require all model\ntraffic to transit APIM for token metering, cost ceilings and content\nsafety. No azurerm_api_management resource exists in either stack,\nand no private DNS zone for it is declared. Today the router calls the\nFoundry data plane directly over the foundry private endpoint.',
+    stroke: C.red,
+    background: C.white,
+    strokeStyle: 'dashed',
+    strokeWidth: 3,
+  };
+  const apimH = Math.max(Scene.measure(apimSpec, apimW), fndH);
+  const dpH = 82 + dataH + 40 + Math.max(fndH, apimH) + 30;
+
+  // Observability row
+  const obsY = dpY + dpH + 60;
+  const obsCols = columns({ x: dpInnerX, count: 2, width: (dpInnerW - 40) / 2, gap: 40 });
+  const obsItems = [
+    {
+      title: 'Log Analytics workspace',
+      body: 'PerGB2018, 30-day retention.\nBacks the Container Apps Environment.',
+    },
+    {
+      title: 'Application Insights',
+      body:
+        'sampling_percentage = 100 — sampling is off so the\nscoreboard is complete inside the 5s budget (AC-5, ADR 004).\nCosmos remains the system of record for audit.',
+    },
+  ];
+  const obsH = rowHeight(obsItems, obsCols.at(0).width);
+  const obsGroupH = 82 + obsH + 30;
+
+  const vnetH = obsY + obsGroupH + 40 - vnetY;
+
+  // ---- emit groups (behind), then boxes (in front) -----------------------
+  const vnet = scene.group({
+    x: X0,
+    y: vnetY,
+    width: W,
+    height: vnetH,
+    label: 'VNET  fcmr-*-vnet   10.42.0.0/16   —   NO PUBLIC DATA-PLANE ENDPOINT',
+    sublabel:
+      'Principle II, enforced by scripts/policy-no-public-endpoints.sh in CI: every resource below declares public access disabled. This boundary is the compliance claim the demo rests on.',
+    stroke: C.green,
+    background: C.white,
+    strokeWidth: 6,
+    labelSize: 28,
+    sublabelSize: 18,
+  });
+
+  const caSub = scene.group({
+    x: caSubX,
+    y: vContentTop,
+    width: caSubW,
+    height: subnetRowH,
+    label: 'subnet  container-apps   10.42.0.0/23',
+    sublabel: 'Delegated to Microsoft.App/environments.',
+    stroke: C.green,
+    background: C.white,
+    strokeWidth: 3,
+  });
+  scene.group({
+    x: caeX,
+    y: vContentTop + 82,
+    width: caeW,
+    height: caeH,
+    label: 'Container Apps Environment  ·  internal load balancer',
+    sublabel: 'internal_load_balancer_enabled = true. No Kubernetes (ADR 001).',
+    stroke: C.blue,
+    background: C.white,
+    strokeWidth: 2,
+  });
+
+  const peSub = scene.group({
+    x: peSubX,
+    y: vContentTop,
+    width: peSubW,
+    height: subnetRowH,
+    label: 'subnet  private-endpoints   10.42.2.0/24',
+    sublabel: 'One private endpoint per data plane. infrastructure/private-endpoints.tf.',
+    stroke: C.green,
+    background: C.white,
+    strokeWidth: 3,
+  });
+
+  const dpGroup = scene.group({
+    x: dpX,
+    y: dpY,
+    width: dpW,
+    height: dpH,
+    label: 'AZURE DATA PLANES  —  publicNetworkAccess = false on every one',
+    sublabel: 'Entra-only authentication; local auth and account keys disabled (Principle VIII).',
+    stroke: C.green,
+    background: C.white,
+    strokeWidth: 3,
+  });
+  scene.group({
+    x: fndX,
+    y: dpY + 82 + dataH + 40,
+    width: fndW,
+    height: fndH,
+    label: 'Microsoft Foundry account  ·  kind = AIServices',
+    sublabel:
+      'publicNetworkAccess Disabled · disableLocalAuth true · allowProjectManagement true. Not an AI Hub workspace.',
+    stroke: C.green,
+    background: C.white,
+    strokeWidth: 3,
+  });
+
+  scene.group({
+    x: dpX,
+    y: obsY,
+    width: dpW,
+    height: obsGroupH,
+    label: 'Observability',
+    sublabel:
+      'Neither workspace has a private endpoint in infrastructure/*.tf — telemetry ingestion is the one data path that is not private-linked.',
+    stroke: C.orange,
+    background: C.white,
+    strokeWidth: 3,
+  });
+
+  // boxes
+  const webui = scene.box({
+    ...webuiSpec,
+    x: appX,
+    y: vContentTop + 82 + 76,
+    width: appW,
+    height: hWebui,
+    stroke: C.red,
+    background: C.bgRed,
+  });
+  const router = scene.box({
+    ...routerSpec,
+    x: appX,
+    y: vContentTop + 82 + 76 + hWebui + 40,
+    width: appW,
+    height: hRouter,
+    stroke: C.blue,
+    background: C.bgBlue,
+    strokeWidth: 3,
+  });
+  const laneRuler = laneCols;
+  const lanes = placeRow(
+    scene,
+    laneRuler,
+    vContentTop + 82 + 76 + hWebui + 40 + hRouter + 40,
+    laneSpecs,
+    { stroke: C.green, background: C.bgGreen },
+  );
+
+  const peBoxes = [];
+  for (let r = 0; r < 3; r += 1) {
+    const y =
+      vContentTop + 82 + peRowH.slice(0, r).reduce((a, b) => a + b + 40, 0);
+    const slice = peItems.slice(r * 2, r * 2 + 2);
+    slice.forEach((spec, i) => {
+      peBoxes.push(
+        scene.box({
+          stroke: C.green,
+          background: C.bgGreen,
+          ...spec,
+          x: peCols.at(i).x,
+          y,
+          width: peCols.at(i).width,
+          height: peRowH[r],
+        }),
+      );
+    });
+  }
+
+  const dataBoxes = placeRow(scene, dataCols, dpY + 82, dataItems, {
+    stroke: C.green,
+    background: C.bgGreen,
+  });
+  const fndProj = scene.box({
+    ...fndProjSpec,
+    x: fndInnerX,
+    y: dpY + 82 + dataH + 40 + 82,
+    width: fndInnerW,
+    height: fndProjH,
+  });
+  placeRow(scene, fndCols, dpY + 82 + dataH + 40 + 82 + fndProjH + 40, fndDeploySpecs);
+  scene.box({
+    ...apimSpec,
+    x: apimX,
+    y: dpY + 82 + dataH + 40,
+    width: apimW,
+    height: apimH,
+  });
+
+  placeRow(scene, obsCols, obsY + 82, obsItems, { stroke: C.orange, background: C.bgYellow });
+
+  // ---- arrows ------------------------------------------------------------
+  const gapBandY = pubZoneBottom + 60;
+  scene.arrow(pub[0], webui, {
+    color: C.red,
+    strokeWidth: 5,
+    label: 'HTTPS — the ONLY public ingress\nanywhere in the system',
+    labelWidth: 520,
+    labelAt: { x: pub[0].cx - 40, y: gapBandY },
+    sides: ['bottom', 'top'],
+  });
+  scene.arrow(pub[1], caSub, {
+    color: C.violet,
+    strokeStyle: 'dashed',
+    strokeWidth: 3,
+    label: 'Entra token issuance · managed identity · app roles\n(identity plane, not a data plane)',
+    labelWidth: 640,
+    labelAt: { x: pub[1].cx + 120, y: gapBandY },
+    sides: ['bottom', 'top'],
+  });
+  scene.arrow(caSub, peSub, {
+    color: C.green,
+    strokeWidth: 5,
+    sides: ['right', 'left'],
+    label: 'ALL data-plane\ntraffic leaves\nthrough a private\nendpoint',
+    labelWidth: 200,
+    labelDy: -110,
+  });
+  scene.arrow(router, peSub, {
+    color: C.blue,
+    strokeWidth: 4,
+    sides: ['right', 'left'],
+    label: 'only the router\nreaches a model\ndeployment',
+    labelWidth: 200,
+    labelDy: 90,
+  });
+  scene.arrow(peSub, dpGroup, {
+    color: C.green,
+    strokeWidth: 5,
+    sides: ['bottom', 'top'],
+    label:
+      'five private endpoints, six private DNS zones linked to the VNet —\neach terminates on the data plane below',
+    labelWidth: 760,
+    labelAt: { x: caSubX + 420, y: vContentTop + subnetRowH + 34 },
+  });
+  scene.arrow(webui, router, { color: C.blue, strokeWidth: 3, sides: ['bottom', 'top'] });
+  for (const lane of lanes) {
+    scene.arrow(lane, router, { color: C.green, strokeWidth: 2, sides: ['top', 'bottom'] });
+  }
+
+  // ---- legend ------------------------------------------------------------
+  scene.legend({
+    x: X0,
+    y: vnetY + vnetH + 60,
+    width: 1240,
+    items: [LEGEND_PRIVATE, LEGEND_PUBLIC, LEGEND_PREVIEW, LEGEND_CHOKEPOINT, LEGEND_ABSENT],
+  });
+  scene.box({
+    x: X0 + 1240 + 60,
+    y: vnetY + vnetH + 60,
+    width: W - 1240 - 60,
+    title: 'What Beat 2 demonstrates with this picture',
+    body:
+      'task cloud:prove-private attempts the same data-plane operation from outside and from inside the VNet: the first fails, the second succeeds.\nThe CI policy job then shows that it cannot silently stop being private. The claim is continuous, not a point-in-time configuration.\nDeliberately excluded (say so out loud): no high availability, no disaster recovery, no multi-region, no real execution, no real data.',
+    stroke: C.blue,
+    background: C.white,
+  });
+
+  return scene;
+}
+
+// ===========================================================================
+// 02 — Request decision flow
+// ===========================================================================
+
+export function requestDecisionFlow() {
+  const scene = new Scene({ name: '02-request-decision-flow', seed: 0x22c4d5e6 });
+  const X0 = 80;
+  const W = 2960;
+
+  scene.header({
+    x: X0,
+    y: 60,
+    width: W,
+    title: '02 · POST /v1/route — how a request becomes a governed decision',
+    subtitle:
+      'Conclusion: the caller never names a model, and governance policy runs BEFORE cost and complexity selection — so a cost optimisation can never reach a model policy has not approved.',
+  });
+
+  // Three columns with 200px gutters, so an arrow label never lands on a box.
+  const COL_L = { x: X0, width: 760 };
+  const COL_C = { x: X0 + 760 + 200, width: 1000 };
+  const COL_R = { x: X0 + 760 + 200 + 1000 + 200, width: 800 };
+
+  const topY = 230;
+
+  // ---- Left column: the caller ------------------------------------------
+  const callerSpec = {
+    title: 'Caller  ·  lane service or webui',
+    body:
+      'POST /v1/route   (Entra token, Router.Invoke app role)\n{\n  "correlationId": "b6b1f0a2-…",\n  "lane": "Research",\n  "taskKind": "synthesize",\n  "payload": { "question": "…" },\n  "costCeilingUsd": 0.25,\n  "latencyBudgetMs": 8000,\n  "dataClassification": "Internal",\n  "policySetId": "CapitalMarkets-US",\n  "complexityHints": {\n    "inputTokenEstimate": 12000,\n    "requiresMultiStep": true,\n    "requiresRetrieval": true,\n    "requiresToolCalls": false\n  }\n}',
+    bodyFamily: MONO,
+    bodySize: 16,
+    stroke: C.blue,
+    background: C.white,
+  };
+  const caller = scene.box({ ...callerSpec, x: COL_L.x, y: topY, width: COL_L.width });
+
+  const absent = scene.box({
+    x: COL_L.x,
+    y: caller.y + caller.height + 50,
+    width: COL_L.width,
+    title: 'PRINCIPLE IV — what is NOT in this request',
+    body:
+      'There is no "model" field.\nThere is no "vendor" field.\nThere is no "deployment" field.\n\nAnd there will not be one: a field that exists is a field that\neventually gets used. dataClassification states what the data IS;\nit is not a routing preference. Omitting it is a 400, never an\nassumption of "Public".',
+    stroke: C.red,
+    background: C.bgRed,
+    strokeWidth: 4,
+  });
+
+  const orderBanner = scene.box({
+    x: COL_L.x,
+    y: absent.y + absent.height + 50,
+    width: COL_L.width,
+    title: 'THE ORDER IS LOAD-BEARING',
+    body:
+      'catalog → PolicyGate.Evaluate() → eligible → TierSelector.Select()\n\nPolicy decides what is PERMISSIBLE.\nThe router then decides what is APPROPRIATE among the permissible.\n\nReverse these two and a cost optimisation can reach a model\ngovernance has not approved. The order is asserted by test, not\nleft to code reading.',
+    stroke: C.red,
+    background: C.bgYellow,
+    strokeWidth: 4,
+  });
+
+  const swap = scene.box({
+    x: COL_L.x,
+    y: orderBanner.y + orderBanner.height + 50,
+    width: COL_L.width,
+    title: 'Beat 5 — the swap nobody deployed for',
+    body:
+      'An approver toggles Anthropic off on /policy. No redeploy, no code\nchange, no prompt change. The identical request replans across the\nremaining approved vendors and the exclusion reason reads:\n"Vendor Anthropic is not approved under policy set\n\'CapitalMarkets-US\'."\n\nSet dataClassification to Restricted and every hosted vendor is\nexcluded; execution lands on the open-weight model on managed\ncompute inside the VNet.',
+    stroke: C.violet,
+    background: C.bgViolet,
+  });
+
+  // ---- Centre column: the pipeline ---------------------------------------
+  const steps = [
+    {
+      title: 'router-service  ·  POST /v1/route',
+      body:
+        'Internal Container Apps ingress. There is no public FQDN.\nRejects a caller without the Router.Invoke app role with 403.\nRoutingPlanner.Plan() is the single entry point and the one place\nthe evaluation order is decided — calling TierSelector directly\nwould bypass the gate.',
+      stroke: C.blue,
+      background: C.bgBlue,
+      strokeWidth: 3,
+    },
+    {
+      title: 'ComplexityScorer.Score(hints)',
+      body:
+        'Pure, deterministic, caller-supplied signals only — never inferred from model output.\ntokens/32000 × 0.40  +  multiStep × 0.25  +  retrieval × 0.20  +  toolCalls × 0.15\nRounded to 4dp, clamped 0–1.   IndicatedTier:  <0.35 Economy · <0.70 Standard · else Premium.',
+      stroke: C.blue,
+      background: C.bgBlue,
+    },
+    {
+      title: 'STEP 1 — PolicyGate.Evaluate(catalog, policySet, classification, region)',
+      body:
+        'Runs FIRST, against the full multi-vendor catalog. Excludes, in order:\n  · region not in policy.AllowedRegions  → the whole catalog is excluded\n  · vendor not in policy.ApprovedVendors\n  · classification > policy.MaxClassification[vendor]\n  · cost > policy.MaxCostPerRequestUsd\nEvery exclusion carries prose fit to read aloud to a governance audience.',
+      stroke: C.red,
+      background: C.bgYellow,
+      strokeWidth: 4,
+    },
+    {
+      title: 'STEP 2 — TierSelector.Select(score, ceiling, eligible)',
+      body:
+        'Sees ONLY the policy-eligible candidates. Prefers the indicated tier; if it is\nunaffordable or unavailable it takes the most capable tier that is both.\nThe ceiling is a control, not a report.',
+      stroke: C.blue,
+      background: C.bgBlue,
+      strokeWidth: 4,
+    },
+    {
+      title: 'Vendor invocation',
+      body:
+        'The selected deployment is invoked over the Foundry private endpoint.\nAPIM metering / content safety is specified but not yet in Terraform.\nNo silent retry on a different tier — that would corrupt the cost figures.',
+      stroke: C.green,
+      background: C.bgGreen,
+    },
+  ];
+
+  const centreBoxes = [];
+  let cy = topY;
+  for (const spec of steps) {
+    const b = scene.box({ ...spec, x: COL_C.x, y: cy, width: COL_C.width });
+    centreBoxes.push(b);
+    cy = b.y + b.height + 60;
+  }
+  const [entry, scorer, gate, selector, invoke] = centreBoxes;
+
+  // ---- Right column: the four outcomes ------------------------------------
+  const outcomes = [
+    {
+      title: 'RefusedByPolicy  →  HTTP 200',
+      body:
+        'Policy left no eligible candidate. selectedDeployment is null and every\ncandidate is listed with its reason.\n\nReturned as 200 on purpose: a refusal is a correct, governed outcome.\nModelling it as 4xx would invite retry-on-error, and the one thing that\nmust never happen is a retry that finds an unapproved model.',
+      stroke: C.red,
+      background: C.bgRed,
+      strokeWidth: 4,
+    },
+    {
+      title: 'Denied  →  HTTP 402',
+      body:
+        'Cost ceiling. Even the cheapest available tier projects above the ceiling.\n"Cheapest available tier Economy projects 0.310 USD against a ceiling\nof 0.250 USD."\n\nKept distinct from RefusedByPolicy: "too expensive" and "not permitted"\nare different conversations with different people.',
+      stroke: C.red,
+      background: C.bgRed,
+      strokeWidth: 3,
+    },
+    {
+      title: 'Downgraded  →  HTTP 200',
+      body:
+        'Complexity indicated a higher tier; the ceiling did not allow it.\nRouted to the most capable affordable tier, with the downgrade named\nin the rationale. This is wow moment B on the comparison screen.',
+      stroke: C.orange,
+      background: C.bgYellow,
+      strokeWidth: 3,
+    },
+    {
+      title: 'Routed  →  HTTP 200',
+      body:
+        'Routed to the tier the complexity score indicated, within both the policy\nceiling and the request ceiling. Rationale names the deciding factor in a\nplain sentence, because the presenter reads it aloud on stage.',
+      stroke: C.green,
+      background: C.bgGreen,
+      strokeWidth: 3,
+    },
+  ];
+  const outcomeH = outcomes.map((s2) => Scene.measure(s2, COL_R.width - 60));
+  const outcomesTop = topY;
+  const outcomesGroupH = 96 + outcomeH.reduce((a, b) => a + b + 50, 0) - 50 + 30;
+  const outcomesGroup = scene.group({
+    x: COL_R.x - 30,
+    y: outcomesTop,
+    width: COL_R.width,
+    height: outcomesGroupH,
+    label: 'FOUR OUTCOMES — three of them are HTTP 200',
+    sublabel: 'A governed "no" is a correct answer, not an error.',
+    stroke: C.ink,
+    background: C.white,
+    strokeWidth: 3,
+  });
+  const outcomeBoxes = [];
+  let oy = outcomesTop + 96;
+  outcomes.forEach((spec, i) => {
+    const b = scene.box({ ...spec, x: COL_R.x, y: oy, width: COL_R.width - 60, height: outcomeH[i] });
+    outcomeBoxes.push(b);
+    oy = b.y + b.height + 50;
+  });
+  oy = outcomesTop + outcomesGroupH;
+  const [refused, denied, downgraded, routed] = outcomeBoxes;
+
+  // ---- Bottom: persistence + audit ---------------------------------------
+  const bottomY = Math.max(cy, oy, swap.y + swap.height + 60) + 40;
+  const persistCols = columns({ x: X0 + 40, count: 3, width: (W - 80 - 2 * 40) / 3, gap: 40 });
+  const persistItems = [
+    {
+      title: 'Cosmos  ·  routerDecisions',
+      body:
+        'Partitioned by /correlationId.\nInputs, candidate tiers with per-candidate rejection\nreasons, policy exclusions, outcome, rationale,\npolicySetId and policySetVersion.\nGET /v1/decisions/{correlationId} (Router.Read).',
+      stroke: C.green,
+      background: C.bgGreen,
+    },
+    {
+      title: 'Cosmos  ·  auditEvents  (append-only)',
+      body:
+        'Every step writes one record keyed by the same correlationId.\nAppend-only and retained for the life of the environment.\nAC-8: the whole chain is reconstructable in ONE query —\nwhich is exactly what Beat 8 does from an unrehearsed pick.',
+      stroke: C.green,
+      background: C.bgGreen,
+      strokeWidth: 3,
+    },
+    {
+      title: 'Scoreboard  ·  Application Insights (Cosmos change feed as fallback)',
+      body:
+        'GET /v1/scoreboard?window=15m — count, total cost, baseline cost,\nsavings delta, p50/p95 latency, tier distribution, mean quality by lane.\nVisible within 5 seconds (AC-5). Sampling is disabled for router and\napproval telemetry; the UI labels the degraded source when it falls back.',
+      stroke: C.blue,
+      background: C.bgBlue,
+    },
+  ];
+  const persistH = rowHeight(persistItems, persistCols.at(0).width);
+  const persistGroup = scene.group({
+    x: X0,
+    y: bottomY,
+    width: W,
+    height: 82 + persistH + 30,
+    label: 'EVERY outcome above — including both refusals — is persisted and audited',
+    sublabel:
+      'A denial is never silently absorbed; it is always surfaced to the UI. Principle VI: one correlationId spans the whole lifecycle.',
+    stroke: C.green,
+    background: C.white,
+    strokeWidth: 3,
+  });
+  placeRow(scene, persistCols, bottomY + 82, persistItems);
+
+  // ---- arrows ------------------------------------------------------------
+  scene.arrow(caller, entry, {
+    color: C.blue,
+    strokeWidth: 3,
+    label: 'a business\nrequest, not a\nmodel choice',
+    labelWidth: 190,
+    labelDy: -60,
+  });
+  scene.arrow(entry, scorer, { color: C.ink, strokeWidth: 3, sides: ['bottom', 'top'] });
+  scene.arrow(scorer, gate, {
+    color: C.red,
+    strokeWidth: 5,
+    sides: ['bottom', 'top'],
+    label: 'score + the FULL catalog',
+    labelWidth: 300,
+    labelDx: 260,
+  });
+  scene.arrow(gate, selector, {
+    color: C.red,
+    strokeWidth: 5,
+    sides: ['bottom', 'top'],
+    label: 'ONLY the policy-eligible candidates reach selection',
+    labelWidth: 460,
+    labelDx: 340,
+  });
+  scene.arrow(selector, invoke, { color: C.green, strokeWidth: 3, sides: ['bottom', 'top'] });
+
+  scene.arrow(gate, refused, {
+    color: C.red,
+    strokeWidth: 4,
+    sides: ['right', 'left'],
+    label: 'no eligible\ncandidate',
+    labelWidth: 190,
+    labelDy: -46,
+  });
+  scene.arrow(selector, denied, {
+    color: C.red,
+    strokeWidth: 3,
+    sides: ['right', 'left'],
+    label: 'nothing\naffordable',
+    labelWidth: 190,
+    labelDy: -46,
+  });
+  scene.arrow(invoke, downgraded, {
+    color: C.orange,
+    strokeWidth: 3,
+    sides: ['right', 'left'],
+    label: 'chosen.Tier\n< indicated',
+    labelWidth: 190,
+    labelDy: -46,
+  });
+  scene.arrow(invoke, routed, {
+    color: C.green,
+    strokeWidth: 3,
+    sides: ['right', 'left'],
+    label: 'chosen.Tier\n== indicated',
+    labelWidth: 190,
+    labelDy: 46,
+  });
+
+  scene.arrow(invoke, persistGroup, {
+    color: C.green,
+    strokeWidth: 4,
+    sides: ['bottom', 'top'],
+    label: 'result + metrics',
+    labelWidth: 260,
+    labelDx: -190,
+  });
+  scene.arrow(outcomesGroup, persistGroup, {
+    color: C.ink,
+    strokeWidth: 4,
+    sides: ['bottom', 'top'],
+    elbow: 'v',
+    label: 'EVERY outcome is written,\nincluding both refusals',
+    labelWidth: 400,
+    labelDx: -230,
+    labelDy: 60,
+  });
+
+  // ---- legend ------------------------------------------------------------
+  const legendY = bottomY + 82 + persistH + 30 + 60;
+  scene.legend({
+    x: X0,
+    y: legendY,
+    width: 1240,
+    items: [
+      LEGEND_CHOKEPOINT,
+      { stroke: C.red, background: C.bgYellow, text: 'Governance gate. Runs before any cost reasoning.' },
+      LEGEND_PUBLIC,
+      { stroke: C.orange, background: C.bgYellow, text: 'Cost control acting — a downgrade, visible and explained.' },
+      LEGEND_PRIVATE,
+    ],
+  });
+  scene.box({
+    x: X0 + 1240 + 60,
+    y: legendY,
+    width: W - 1240 - 60,
+    title: 'The test of Principle IV, stated as an experiment',
+    body:
+      'Two requests with byte-identical bodies, submitted under different policy sets, may execute on different vendors and both succeed.\nIf swapping a vendor requires a code change, a redeploy, or a prompt edit, the principle is violated — no matter what the diagram says.\nThe router is deterministic code and always will be: routing the thing that decides routing would be circular, and a compliance audience\nwill read this assembly line by line. It is under a 70% coverage gate for exactly that reason.',
+    stroke: C.blue,
+    background: C.white,
+  });
+
+  return scene;
+}
+
+// ===========================================================================
+// 03 — Agent architecture
+// ===========================================================================
+
+export function agentArchitecture() {
+  const scene = new Scene({ name: '03-agent-architecture', seed: 0x33e6f708 });
+  const X0 = 80;
+  const W = 2760;
+
+  scene.header({
+    x: X0,
+    y: 60,
+    width: W,
+    title: '03 · Lane services as custodians of Foundry hosted agents',
+    subtitle:
+      'Conclusion: the agent reasons but the service is accountable — two network-enforced boundaries stop the agent reaching a model or a tool reaching a model, and no consequential action leaves the system without a human.',
+  });
+
+  const topY = 240;
+  const cols4 = columns({ x: X0, count: 4, width: (W - 3 * 160) / 4, gap: 160 });
+
+  const custodianSpec = {
+    title: '① Lane service  ·  the CUSTODIAN',
+    body:
+      'C# on Container Apps. It is not the agent.\n\n1. stamps correlationId BEFORE thread creation\n2. creates ONE thread for ONE business request —\n   threads are never reused, because carried-over\n   context makes cost and reproducibility\n   unexplainable and both are demo claims\n3. supplies the tool surface\n4. enforces the approval halt\n5. writes the audit record\n\nStep budget: exceed it and the agent halts, returns\npartial work, and logs. An agent that loops on stage\nis worse than one that stops.',
+    stroke: C.blue,
+    background: C.bgBlue,
+    strokeWidth: 3,
+  };
+  const agentSpec = {
+    title: '② Hosted Foundry agent  ·  one per lane',
+    body:
+      'Runs under the Foundry PROJECT identity (ADR 005).\n\nResearch — retrieve, then synthesise per claim.\n  Read-only. Must be able to return "I could not\n  attribute this" as a SUCCESS (Principle III).\nSurveillance — triage 500+ alerts, then assemble\n  evidence. Halts for approval.\nOrder routing — one proposal. Halts every time.\n\nRetrieved chunks are DATA, never instructions:\nwrapped in a delimited envelope that carries no tool\nauthority. Injection attempts are logged as audit\nevents (T-024).',
+    stroke: C.violet,
+    background: C.bgViolet,
+    strokeWidth: 3,
+  };
+  const mcpSpec = {
+    title: '③ MCP tool server  ·  hosted IN the lane service',
+    body:
+      'Research: search_corpus, fetch_chunk, list_sources\n  — all read-only.\nSurveillance: fetch_alert_batch, fetch_communications,\n  fetch_trade_context, submit_for_approval.\nOrder routing: fetch_order, fetch_venue_liquidity,\n  evaluate_best_execution_policy, submit_for_approval.\n\nevaluate_best_execution_policy is deterministic code\nthe agent CALLS, not the agent\'s judgement. The model\nexplains the result; code decides what is permitted.\n\nsubmit_for_approval is the ONLY tool in the entire\nsystem with a side effect — and it writes a proposal,\nnever a state change.',
+    stroke: C.green,
+    background: C.bgGreen,
+    strokeWidth: 3,
+  };
+  const dataSpec = {
+    title: '④ Data planes  ·  private endpoints only',
+    body:
+      'Azure AI Search — synthetic research corpus.\nCosmos DB — alerts, proposals, approvals, audit.\nSimulated OMS — labelled simulated on the record\nitself, not as a disclaimer in a corner, so a\nscreenshot taken out of context is still honest.\n\nThe lane service identities hold Search Index Data\nReader and nothing on Foundry (apps/roles.tf).',
+    stroke: C.green,
+    background: C.bgGreen,
+    strokeWidth: 3,
+  };
+
+  const rowSpecs = [custodianSpec, agentSpec, mcpSpec, dataSpec];
+  const rowH = rowHeight(rowSpecs, cols4.at(0).width);
+  const rowBoxes = rowSpecs.map((s, i) =>
+    scene.box({ ...s, x: cols4.at(i).x, y: topY, width: cols4.at(i).width, height: rowH }),
+  );
+  const [custodian, agent, mcp, dataPlanes] = rowBoxes;
+
+  scene.arrow(custodian, agent, {
+    color: C.blue,
+    strokeWidth: 3,
+    label: 'thread +\ncorrelationId',
+    labelWidth: 150,
+    labelDy: -60,
+  });
+  scene.arrow(agent, mcp, {
+    color: C.violet,
+    strokeWidth: 3,
+    label: 'tool call',
+    labelWidth: 150,
+    labelDy: -60,
+  });
+  scene.arrow(mcp, dataPlanes, {
+    color: C.green,
+    strokeWidth: 3,
+    label: 'reads data',
+    labelWidth: 150,
+    labelDy: -60,
+  });
+
+  // ---- Boundary 2 --------------------------------------------------------
+  const b2y = topY + rowH + 70;
+  const b2 = scene.box({
+    x: X0,
+    y: b2y,
+    width: W,
+    title: 'BOUNDARY 2 — network enforced:  TOOLS REACH DATA, NEVER MODELS',
+    body:
+      'No MCP tool wraps a model invocation. If a tool needs model output it calls the router like any other caller, and that call is routed, priced and recorded.\nThis is what keeps the cost scoreboard a total rather than a sample: there is no side door through which an unmetered model call can be made.',
+    stroke: C.red,
+    background: C.bgRed,
+    strokeWidth: 4,
+    strokeStyle: 'dashed',
+  });
+
+  // ---- Boundary 1 --------------------------------------------------------
+  const b1y = b2.y + b2.height + 60;
+  const b1 = scene.box({
+    x: X0,
+    y: b1y,
+    width: W,
+    title: "BOUNDARY 1 — network enforced:  THE AGENT'S MODEL ACCESS IS THE ROUTER'S",
+    body:
+      'Only the router-service identity holds "Azure AI Developer" on the Foundry project (apps/roles.tf). The lane services have no such assignment and no route to the Foundry data plane.\nThis is not a convention enforced by code review. It is the reason the cost ceiling is a control rather than a reporting feature: a ceiling services could bypass would be advisory.',
+    stroke: C.red,
+    background: C.bgRed,
+    strokeWidth: 4,
+    strokeStyle: 'dashed',
+  });
+
+  // ---- Router chain ------------------------------------------------------
+  const chainY = b1.y + b1.height + 60;
+  const chainCols = columns({ x: X0, count: 3, width: (W - 2 * 60) / 3, gap: 60 });
+  const chainSpecs = [
+    {
+      title: 'router-service  ·  POST /v1/route',
+      body:
+        'The single chokepoint. Deterministic code, never an agent:\nmaking the component that enforces governance non-deterministic\nis not a position you can defend to a compliance audience.\nPolicyGate then TierSelector, decision recorded with rationale.',
+      stroke: C.blue,
+      background: C.bgBlue,
+      strokeWidth: 4,
+    },
+    {
+      title: 'APIM AI gateway  —  NOT IN TERRAFORM',
+      body:
+        'Specified for token metering, cost ceilings and content safety in\ndocs/architecture.md and the constitution. No APIM resource exists\nin either stack today, so the ceiling is currently enforced in one\nplace (the router) rather than two.',
+      stroke: C.red,
+      background: C.white,
+      strokeWidth: 3,
+      strokeStyle: 'dashed',
+    },
+    {
+      title: 'Foundry model deployments',
+      body:
+        'Serverless: AzureOpenAI, Anthropic, xAI.\nManaged compute (PREVIEW): open-weight model on H100_80GB\ncapacity inside the VNet — the only destination cleared for\nRestricted data.',
+      stroke: C.green,
+      background: C.bgGreen,
+      strokeWidth: 3,
+    },
+  ];
+  const chainH = rowHeight(chainSpecs, chainCols.at(0).width);
+  const chain = chainSpecs.map((s, i) =>
+    scene.box({ ...s, x: chainCols.at(i).x, y: chainY, width: chainCols.at(i).width, height: chainH }),
+  );
+  scene.arrow(chain[0], chain[1], { color: C.blue, strokeWidth: 3 });
+  scene.arrow(chain[1], chain[2], { color: C.green, strokeWidth: 3 });
+  scene.arrow(agent, b1, {
+    color: C.violet,
+    strokeWidth: 3,
+    strokeStyle: 'dashed',
+    sides: ['bottom', 'top'],
+    label: 'model invocation — crosses the boundary only via the router',
+    labelWidth: 620,
+    labelAt: { x: X0 + W - 420, y: b2.y + b2.height + 30 },
+  });
+  scene.arrow(b1, chain[0], { color: C.red, strokeWidth: 4, sides: ['bottom', 'top'] });
+
+  // ---- Determinism row ---------------------------------------------------
+  const detY = chainY + chainH + 70;
+  const detCols = columns({ x: X0 + 40, count: 3, width: (W - 80 - 2 * 60) / 3, gap: 60 });
+  const detSpecs = [
+    {
+      title: 'The model produces SCORES',
+      body:
+        'Each alert is scored against a fixed rubric with the temperature\npinned. 500 alerts do not fit one context window and do not try to:\nthe service chunks them and routes each chunk independently —\nwhich is also what makes the cost scoreboard interesting.',
+      stroke: C.violet,
+      background: C.bgViolet,
+    },
+    {
+      title: 'Deterministic CODE produces the RANKING',
+      body:
+        'The ordering is applied by the lane service, not by the model.\nThis is the single design choice that makes AC-6 achievable:\nsame seed and same inputs produce the same order, provably,\non stage. A free-running agent over 500 alerts would not.',
+      stroke: C.blue,
+      background: C.bgBlue,
+      strokeWidth: 4,
+    },
+    {
+      title: 'Quality is deterministic too — never LLM-as-judge',
+      body:
+        'Attribution coverage (research), rank agreement against a seeded\nground truth (surveillance), policy conformance (order routing).\nAll recomputable by the audience. A model-graded number invites\nan obvious objection and the demo loses the room defending it.',
+      stroke: C.green,
+      background: C.bgGreen,
+    },
+  ];
+  const detH = rowHeight(detSpecs, detCols.at(0).width);
+  scene.group({
+    x: X0,
+    y: detY,
+    width: W,
+    height: 82 + detH + 30,
+    label: 'REPRODUCIBILITY — where the model stops and code starts',
+    sublabel: 'The boundary that makes AC-6 (identical ranking for a fixed seed) an achievable claim.',
+    stroke: C.blue,
+    background: C.white,
+    strokeWidth: 3,
+  });
+  const detBoxes = detSpecs.map((s, i) =>
+    scene.box({ ...s, x: detCols.at(i).x, y: detY + 82, width: detCols.at(i).width, height: detH }),
+  );
+  scene.arrow(detBoxes[0], detBoxes[1], { color: C.blue, strokeWidth: 3 });
+  scene.arrow(detBoxes[1], detBoxes[2], { color: C.green, strokeWidth: 3 });
+
+  // ---- Human in the loop -------------------------------------------------
+  const hitlY = detY + 82 + detH + 30 + 70;
+  const hitlCols = columns({ x: X0 + 40, count: 4, width: (W - 80 - 3 * 50) / 4, gap: 50 });
+  const hitlSpecs = [
+    {
+      title: 'submit_for_approval',
+      body:
+        'The only side-effecting tool in the system.\nIt writes a proposal plus an evidence packet.\nNo alert, order or publication changes state.',
+      stroke: C.orange,
+      background: C.bgYellow,
+    },
+    {
+      title: 'PendingApproval  ·  Cosmos approvals',
+      body:
+        'The proposal, the evidence packet exactly as it\nwill be presented, and the proposing identity.\nPartitioned by /correlationId.',
+      stroke: C.orange,
+      background: C.bgYellow,
+    },
+    {
+      title: 'HUMAN approver  ·  Approver app role',
+      body:
+        'Segregation of duties is enforced in the approval API,\nnot in the UI. The UI renders the control disabled with\nthe reason; the API refuses the call. Beat 6 shows the\nAPI refusing, because that is the one the audience believes.',
+      stroke: C.orange,
+      background: C.bgYellow,
+      strokeWidth: 4,
+    },
+    {
+      title: 'Approved → executed & audited   ·   Expired → nothing happened',
+      body:
+        'An approval persists approver identity, timestamp, decision and\nthe full evidence packet presented at decision time.\nAn unapproved proposal EXPIRES. It never auto-executes on\ntimeout — a gate that opens on inaction is not a gate.',
+      stroke: C.orange,
+      background: C.bgYellow,
+      strokeWidth: 3,
+    },
+  ];
+  const hitlH = rowHeight(hitlSpecs, hitlCols.at(0).width);
+  scene.group({
+    x: X0,
+    y: hitlY,
+    width: W,
+    height: 82 + hitlH + 30,
+    label: 'PRINCIPLE I — HUMAN IN THE LOOP (NON-NEGOTIABLE)',
+    sublabel: 'The agent may propose, rank, draft and evidence. It may not commit.',
+    stroke: C.orange,
+    background: C.white,
+    strokeWidth: 4,
+  });
+  const hitlBoxes = hitlSpecs.map((s, i) =>
+    scene.box({ ...s, x: hitlCols.at(i).x, y: hitlY + 82, width: hitlCols.at(i).width, height: hitlH }),
+  );
+  scene.arrow(hitlBoxes[0], hitlBoxes[1], { color: C.orange, strokeWidth: 3 });
+  scene.arrow(hitlBoxes[1], hitlBoxes[2], { color: C.orange, strokeWidth: 3 });
+  scene.arrow(hitlBoxes[2], hitlBoxes[3], { color: C.orange, strokeWidth: 3 });
+
+  // ---- Failure modes -----------------------------------------------------
+  const failY = hitlY + 82 + hitlH + 30 + 70;
+  const failCols = columns({ x: X0 + 40, count: 4, width: (W - 80 - 3 * 50) / 4, gap: 50 });
+  const failSpecs = [
+    {
+      title: 'Tool error',
+      body: 'Surfaced to the agent. One retry, then partial\nresults with the gap explicitly named.',
+    },
+    {
+      title: 'Model timeout',
+      body:
+        'The router returns a routing failure and the lane\nreports it. NO silent retry on a different tier —\nthat would corrupt the cost figures.',
+    },
+    {
+      title: 'No eligible model (policy)',
+      body:
+        'Explicit refusal naming the exclusions. Never a\nfallback to an unapproved model. A governance\nsystem that degrades OPEN is not a control.',
+      stroke: C.red,
+      background: C.bgRed,
+      strokeWidth: 3,
+    },
+    {
+      title: 'Step budget exceeded',
+      body:
+        'Halt, return partial work, log. Foundry caps tool\ncount and step depth; the surveillance agent is\nclosest to those limits (verify early, T-027a).',
+    },
+  ];
+  const failH = rowHeight(failSpecs, failCols.at(0).width);
+  scene.group({
+    x: X0,
+    y: failY,
+    width: W,
+    height: 82 + failH + 30,
+    label: 'FAILURE MODES — each has a defined, demonstrable behaviour',
+    sublabel: 'Every one of these is rehearsed. A failure with no defined behaviour is a failure discovered on stage.',
+    stroke: C.ink,
+    background: C.white,
+    strokeWidth: 3,
+  });
+  failSpecs.forEach((s, i) =>
+    scene.box({
+      stroke: C.ink,
+      background: C.white,
+      ...s,
+      x: failCols.at(i).x,
+      y: failY + 82,
+      width: failCols.at(i).width,
+      height: failH,
+    }),
+  );
+
+  // ---- legend ------------------------------------------------------------
+  const legendY = failY + 82 + failH + 30 + 60;
+  scene.legend({
+    x: X0,
+    y: legendY,
+    width: 1240,
+    items: [
+      LEGEND_CHOKEPOINT,
+      { stroke: C.violet, background: C.bgViolet, text: 'Model reasoning — the non-deterministic part, deliberately fenced.' },
+      LEGEND_PRIVATE,
+      LEGEND_HUMAN,
+      { stroke: C.red, background: C.bgRed, strokeStyle: 'dashed', text: 'Network-enforced boundary, or a refusal path.' },
+      LEGEND_ABSENT,
+    ],
+  });
+  scene.box({
+    x: X0 + 1240 + 60,
+    y: legendY,
+    width: W - 1240 - 60,
+    title: 'Why the router is not an agent',
+    body:
+      'The exchange is deterministic code: policy evaluation, complexity scoring, tier selection. It is the component a compliance audience will interrogate line by line\nand the assembly under a coverage gate. Making it an agent would mean explaining why the thing that enforces governance is itself non-deterministic.\nIt is a service, permanently. The same separation appears twice more: evaluate_best_execution_policy decides and the agent explains; the model scores alerts\nand the service ranks them. In each case the model reasons and code decides what is permitted.',
+    stroke: C.blue,
+    background: C.white,
+  });
+
+  return scene;
+}
+
+// ===========================================================================
+// 04 — UI screen map
+// ===========================================================================
+
+export function uiScreenMap() {
+  const scene = new Scene({ name: '04-ui-screen-map', seed: 0x44081920 });
+  const X0 = 80;
+  const W = 2520;
+
+  scene.header({
+    x: X0,
+    y: 60,
+    width: W,
+    title: '04 · Scoreboard UI — twelve screens, grouped by app role',
+    subtitle:
+      'Conclusion: for the audience the UI is the system, and every beat of the demo has a screen that owns it — including the governance surface (/policy) that Beat 5 cannot happen without.',
+  });
+
+  const topY = 240;
+  const roleCols = columns({ x: X0, count: 3, width: (W - 2 * 160) / 3, gap: 160 });
+  const colW = roleCols.at(0).width;
+  const innerW = colW - 60;
+
+  const invokeScreens = [
+    {
+      title: '1 · Request console   /',
+      body:
+        'Beats 3 and 5. T-028.\nSubmits a business request: intent, cost ceiling,\ndata classification. Exposes classification as a\ncontrol — it is a property of the REQUEST, not a\nrouting preference, so it stays inside Principle IV.',
+      stroke: C.blue,
+      background: C.bgBlue,
+    },
+    {
+      title: '9 · Research   /research   — WOW D',
+      body:
+        'Beat 7. T-033.\nInline citations as clickable superscripts opening the\nsource chunk; coverage percentage in the header.\nThe unattributable-claims panel is ALWAYS present and\nsays "no unattributable claims" when empty — a panel\nthat only appears on failure teaches the audience it is\nan error state rather than a control.',
+      stroke: C.violet,
+      background: C.bgViolet,
+      strokeWidth: 4,
+    },
+    {
+      title: '10 · Order routing   /orders',
+      body:
+        'No beat of its own. T-034.\nEvery surface showing execution is labelled SIMULATED\non the record itself, not as a corner disclaimer.',
+      stroke: C.blue,
+      background: C.bgBlue,
+    },
+  ];
+
+  const readScreens = [
+    {
+      title: '2 · Live scoreboard   /scoreboard',
+      body:
+        'Beat 3. T-029.\n5-second refresh; shows the timestamp of the data,\nnot a spinner. A stale number that admits it is stale\nbeats a fresh-looking lie.',
+      stroke: C.blue,
+      background: C.bgBlue,
+    },
+    {
+      title: '3 · Cost comparison   /scoreboard/comparison   — WOW B',
+      body:
+        'Beat 3. T-030.\nONE number dominates: percentage saved against an\nall-premium baseline. Per-request tier, cost, latency\nand rationale beneath it. The presenter drills a row\nmid-sentence and reads the rationale aloud, so the\nrationale must be a plain sentence naming the deciding\nfactor — not a JSON blob and not a score.',
+      stroke: C.violet,
+      background: C.bgViolet,
+      strokeWidth: 4,
+    },
+    {
+      title: '4 · Decision detail   /decisions/:id',
+      body:
+        'Beats 3 and 8. T-029.\nComplexity inputs, candidate tiers with per-candidate\nrejection reasons, policy exclusions, outcome, rationale.\nEvery number on the scoreboard opens to this.',
+      stroke: C.blue,
+      background: C.bgBlue,
+    },
+    {
+      title: '5 · Surveillance triage   /surveillance   — WOW C',
+      body:
+        'Beat 4. T-031.\n500+ alerts, virtualised list (500 DOM rows stutter on\nprojector hardware and the stutter reads as "this does\nnot scale"). Sorts default to model rank, because the\nranking IS the product. A visible seed indicator carries\nthe AC-6 reproducibility claim.',
+      stroke: C.violet,
+      background: C.bgViolet,
+      strokeWidth: 4,
+    },
+    {
+      title: '6 · Alert detail   /surveillance/:id',
+      body:
+        'Beat 4. T-031.\nRationale plus assembled evidence. Proposing escalation\nfrom here creates an approval, never an escalation.',
+      stroke: C.blue,
+      background: C.bgBlue,
+    },
+    {
+      title: '11 · Audit reconstruction   /audit/:correlationId',
+      body:
+        'Beat 8. T-020.\nOne query rebuilds the whole chain. The audience picks\nthe interaction — unrehearsed, or it is worth nothing.',
+      stroke: C.green,
+      background: C.bgGreen,
+      strokeWidth: 3,
+    },
+  ];
+
+  const approverScreens = [
+    {
+      title: '7 · Approval queue   /approvals',
+      body:
+        'Beat 6. T-032.\nPending proposals with their evidence packets, and\nexpired proposals showing that a timeout produced\nno action at all.',
+      stroke: C.orange,
+      background: C.bgYellow,
+    },
+    {
+      title: '8 · Approval detail   /approvals/:id',
+      body:
+        'Beat 6. T-032.\nThe approve control renders DISABLED with the reason\nstated when the viewer is the proposer — and the API\nrefuses the call independently. Unauthorised navigation\nis hidden; unauthorised ACTIONS are visibly blocked.\nThose are different on purpose: a hidden button leaves\nnothing to demonstrate.',
+      stroke: C.orange,
+      background: C.bgYellow,
+      strokeWidth: 4,
+    },
+    {
+      title: '12 · Policy sets   /policy   — UNSCHEDULED',
+      body:
+        'Beat 5. No task number: this screen does not exist in\nthe current task list, and Beat 5 cannot run without it.\nThe vendor toggle has to live in the product — doing it\nin the Azure portal breaks the claim that governance is\na first-class surface. Read-mostly with a single vendor\ntoggle is enough.',
+      stroke: C.red,
+      background: C.bgRed,
+      strokeWidth: 4,
+    },
+  ];
+
+  function placeColumn(index, roleTitle, roleSub, screens, stroke) {
+    const x = roleCols.at(index).x;
+    const heights = screens.map((s) => Scene.measure(s, innerW));
+    const groupH = 96 + heights.reduce((a, b) => a + b + 40, 0) - 40 + 30;
+    const g = scene.group({
+      x,
+      y: topY,
+      width: colW,
+      height: groupH,
+      label: roleTitle,
+      sublabel: roleSub,
+      stroke,
+      background: C.white,
+      strokeWidth: 3,
+    });
+    let y = topY + 96;
+    const boxes = screens.map((s, i) => {
+      const b = scene.box({ ...s, x: x + 30, y, width: innerW, height: heights[i] });
+      y += heights[i] + 40;
+      return b;
+    });
+    return { boxes, bottom: topY + groupH, group: g };
+  }
+
+  const invoke = placeColumn(
+    0,
+    'Router.Invoke',
+    'Service-to-service model access through the router. Application member type.',
+    invokeScreens,
+    C.blue,
+  );
+  const read = placeColumn(
+    1,
+    'Router.Read',
+    'Read routing decisions and the scoreboard. User and Application.',
+    readScreens,
+    C.blue,
+  );
+  const approver = placeColumn(
+    2,
+    'Approver',
+    'Decide on pending proposals. Cannot approve own proposals. User only.',
+    approverScreens,
+    C.orange,
+  );
+
+  const bottom = Math.max(invoke.bottom, read.bottom, approver.bottom);
+
+  // Navigation / drill paths that the demo actually walks.
+  scene.arrow(read.boxes[1], read.boxes[2], {
+    color: C.blue,
+    strokeWidth: 3,
+    sides: ['left', 'left'],
+    elbow: 'h',
+    label: 'drill a row\nmid-sentence',
+    labelWidth: 140,
+    labelDx: -80,
+  });
+  scene.arrow(read.boxes[3], read.boxes[4], {
+    color: C.blue,
+    strokeWidth: 3,
+    sides: ['left', 'left'],
+    elbow: 'h',
+    label: 'open the\ntop alert',
+    labelWidth: 140,
+    labelDx: -80,
+  });
+  scene.arrow(read.boxes[4], approver.boxes[0], {
+    color: C.orange,
+    strokeWidth: 4,
+    label: 'propose\nescalation →\nit does NOT\nescalate',
+    labelWidth: 150,
+  });
+  scene.arrow(approver.boxes[0], approver.boxes[1], {
+    color: C.orange,
+    strokeWidth: 3,
+    sides: ['right', 'right'],
+    elbow: 'h',
+    label: 'open the\nevidence packet',
+    labelWidth: 140,
+    labelDx: 80,
+  });
+  const beat5Detour =
+    bottom - (approver.boxes[2].y + approver.boxes[2].height) + 70;
+  scene.arrow(approver.boxes[2], invoke.group, {
+    color: C.red,
+    strokeWidth: 5,
+    sides: ['bottom', 'bottom'],
+    detour: beat5Detour,
+    label:
+      'BEAT 5: disable a vendor on 12 · Policy sets, then resubmit the IDENTICAL request on 1 · Request console.  No redeploy, no code change, no prompt change.',
+    labelWidth: 1100,
+    labelAt: { x: X0 + W / 2, y: bottom + 100 },
+  });
+  scene.arrow(read.boxes[2], read.boxes[5], {
+    color: C.green,
+    strokeWidth: 3,
+    sides: ['right', 'right'],
+    elbow: 'h',
+    label: 'correlationId',
+    labelWidth: 140,
+    labelDx: 80,
+  });
+
+  // ---- Beat track --------------------------------------------------------
+  const beatY = bottom + 170;
+  const beatCols = columns({ x: X0 + 40, count: 6, width: (W - 80 - 5 * 40) / 6, gap: 40 });
+  const beats = [
+    { title: 'Beat 2', body: 'Private by construction.\nNo screen — it is a shell\nand a CI job.' },
+    { title: 'Beat 3 — PRIMARY', body: 'Router economics.\nScreens 1, 2, 3, 4.', stroke: C.violet, background: C.bgViolet },
+    { title: 'Beat 4 — PRIMARY', body: 'Surveillance triage.\nScreens 5, 6.', stroke: C.violet, background: C.bgViolet },
+    { title: 'Beat 5', body: 'The model swap.\nScreens 12 then 1.\nCompress, never cut.', stroke: C.red, background: C.bgRed },
+    { title: 'Beat 6', body: 'Human in the loop.\nScreens 7, 8.', stroke: C.orange, background: C.bgYellow },
+    { title: 'Beats 7 & 8', body: 'Attributed research (9),\nthen audit from an\nunrehearsed pick (11).', stroke: C.green, background: C.bgGreen },
+  ];
+  const beatH = rowHeight(beats, beatCols.at(0).width);
+  scene.group({
+    x: X0,
+    y: beatY,
+    width: W,
+    height: 82 + beatH + 30,
+    label: 'DEMO BEAT → SCREEN',
+    sublabel: 'Beats 3, 4 and 5 are independent: if a lane service is unhealthy, skip its beat and never debug live.',
+    stroke: C.ink,
+    background: C.white,
+    strokeWidth: 3,
+  });
+  beats.forEach((b, i) =>
+    scene.box({
+      stroke: C.ink,
+      background: C.white,
+      ...b,
+      x: beatCols.at(i).x,
+      y: beatY + 82,
+      width: beatCols.at(i).width,
+      height: beatH,
+    }),
+  );
+
+  // ---- Required states ---------------------------------------------------
+  const stateY = beatY + 82 + beatH + 30 + 70;
+  const stateCols = columns({ x: X0 + 40, count: 5, width: (W - 80 - 4 * 40) / 5, gap: 40 });
+  const states = [
+    { title: 'Loading', body: 'Skeleton matching the final\nlayout. No layout shift on\na projector.' },
+    { title: 'Empty', body: 'Explains what would populate\nit and how to trigger it.' },
+    { title: 'Error', body: 'Names what failed and what\nstill works. Never a bare\n"Something went wrong".' },
+    { title: 'Partial', body: 'Some lanes returned, some did\nnot. Show what exists, mark\nwhat is missing.' },
+    {
+      title: 'Degraded',
+      body: 'Fallback source or stale data,\nlabelled inline. A demo that\nhides its own failure is one\nbad question from collapse.',
+      stroke: C.orange,
+      background: C.bgYellow,
+    },
+  ];
+  const stateH = rowHeight(states, stateCols.at(0).width);
+  scene.group({
+    x: X0,
+    y: stateY,
+    width: W,
+    height: 82 + stateH + 30,
+    label: 'EVERY data view implements all five states',
+    sublabel: 'The empty state nobody built is the one that renders during the live run.',
+    stroke: C.ink,
+    background: C.white,
+    strokeWidth: 3,
+  });
+  states.forEach((s, i) =>
+    scene.box({
+      stroke: C.ink,
+      background: C.white,
+      ...s,
+      x: stateCols.at(i).x,
+      y: stateY + 82,
+      width: stateCols.at(i).width,
+      height: stateH,
+    }),
+  );
+
+  // ---- legend ------------------------------------------------------------
+  const legendY = stateY + 82 + stateH + 30 + 60;
+  scene.legend({
+    x: X0,
+    y: legendY,
+    width: 1180,
+    items: [
+      { stroke: C.violet, background: C.bgViolet, text: 'Carries a wow moment. These three screens are the demo.' },
+      LEGEND_HUMAN,
+      { stroke: C.green, background: C.bgGreen, text: 'Evidence and audit surface — drillable to the record behind it.' },
+      { stroke: C.blue, background: C.bgBlue, text: 'Supporting screen. Still drillable; nothing on screen is decorative.' },
+      { stroke: C.red, background: C.bgRed, text: 'Required by a beat but NOT in the task list. Build it or lose Beat 5.' },
+    ],
+  });
+  scene.box({
+    x: X0 + 1180 + 60,
+    y: legendY,
+    width: W - 1180 - 60,
+    title: 'Rules the whole UI obeys',
+    body:
+      'The audience reads this from ten feet away: every screen has one number that is deliberately the largest thing on it.\nNothing may look rehearsed — no pre-baked screenshots, no seeded animations. If a value is on screen it came from the API just now.\nEvery claim is drillable: a number a presenter cannot open is a number the audience assumes is decorative.\nPolling at 5s with refetchOnWindowFocus disabled, so a presenter alt-tabbing does not trigger a visible refetch mid-sentence.\nTypes are generated from contracts/*.md, never hand-written, because hand-written types drift and the drift surfaces during a demo.',
+    stroke: C.blue,
+    background: C.white,
+  });
+
+  return scene;
+}
+
+export const DIAGRAMS = [
+  { file: '01-platform-topology.excalidraw', build: platformTopology },
+  { file: '02-request-decision-flow.excalidraw', build: requestDecisionFlow },
+  { file: '03-agent-architecture.excalidraw', build: agentArchitecture },
+  { file: '04-ui-screen-map.excalidraw', build: uiScreenMap },
+];
+
+===== FILE: scripts/diagrams/generate-diagrams.mjs =====
+#!/usr/bin/env node
+// generate-diagrams.mjs
+//
+// Deterministic Excalidraw diagram generator for foundry-capital-markets-router.
+//
+//   node generate-diagrams.mjs [--out <dir>] [--check]
+//
+//   --out <dir>   Output directory. Default: docs/diagrams
+//   --check       Regenerate into memory and exit non-zero if the on-disk files
+//                 differ. Lets CI assert the diagrams are in sync with this
+//                 generator; the diagrams are source-controlled artefacts, not
+//                 hand-edited drawings.
+//
+// Node built-ins only. No network. Byte-for-byte reproducible: all "random"
+// element fields come from a counter-based PRNG with a fixed seed and `updated`
+// is the constant 1, so re-running never produces a spurious diff.
+
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { resolve, join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { DIAGRAMS } from './diagrams.mjs';
+
+function parseArgs(argv) {
+  const args = { out: 'docs/diagrams', check: false };
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a === '--out') {
+      const value = argv[i + 1];
+      if (!value || value.startsWith('--')) {
+        throw new Error('--out requires a directory argument');
+      }
+      args.out = value;
+      i += 1;
+    } else if (a === '--check') {
+      args.check = true;
+    } else if (a === '--help' || a === '-h') {
+      args.help = true;
+    } else {
+      throw new Error(`Unknown argument: ${a}`);
+    }
+  }
+  return args;
+}
+
+const USAGE = `Usage: node generate-diagrams.mjs [--out <dir>] [--check]
+
+  --out <dir>   Output directory (default: docs/diagrams)
+  --check       Verify on-disk files match the generator; exit 1 if not
+  -h, --help    Show this message
+`;
+
+function sha256(text) {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+function render() {
+  return DIAGRAMS.map(({ file, build }) => {
+    const scene = build();
+    const json = scene.toJSON();
+    const b = scene.bounds();
+    return {
+      file,
+      json,
+      elementCount: scene.elements.length,
+      bounds: b,
+      hash: sha256(json),
+    };
+  });
+}
+
+function main() {
+  let args;
+  try {
+    args = parseArgs(process.argv.slice(2));
+  } catch (err) {
+    process.stderr.write(`${err.message}\n\n${USAGE}`);
+    process.exit(2);
+  }
+  if (args.help) {
+    process.stdout.write(USAGE);
+    return;
+  }
+
+  const outDir = resolve(process.cwd(), args.out);
+  const rendered = render();
+
+  if (args.check) {
+    let drift = 0;
+    for (const d of rendered) {
+      const path = join(outDir, d.file);
+      if (!existsSync(path)) {
+        process.stderr.write(`MISSING  ${path}\n`);
+        drift += 1;
+        continue;
+      }
+      const onDisk = readFileSync(path, 'utf8');
+      if (onDisk === d.json) {
+        process.stdout.write(`ok       ${d.file}  ${d.hash.slice(0, 16)}\n`);
+      } else {
+        process.stderr.write(
+          `DRIFT    ${d.file}\n  on disk:   ${sha256(onDisk)}\n  generated: ${d.hash}\n`,
+        );
+        drift += 1;
+      }
+    }
+    if (drift > 0) {
+      process.stderr.write(
+        `\n${drift} diagram(s) out of sync. Re-run: node generate-diagrams.mjs --out ${args.out}\n`,
+      );
+      process.exit(1);
+    }
+    process.stdout.write('\nAll diagrams are in sync with the generator.\n');
+    return;
+  }
+
+  mkdirSync(outDir, { recursive: true });
+  for (const d of rendered) {
+    writeFileSync(join(outDir, d.file), d.json, 'utf8');
+    const { width, height, minX, minY } = d.bounds;
+    process.stdout.write(
+      `wrote ${d.file.padEnd(34)} ${String(d.elementCount).padStart(4)} elements  ` +
+        `canvas ${Math.round(width)}x${Math.round(height)} ` +
+        `(origin ${Math.round(minX)},${Math.round(minY)})  ${d.hash.slice(0, 16)}\n`,
+    );
+  }
+  process.stdout.write(`\n${rendered.length} diagrams written to ${outDir}\n`);
+}
+
+main();
+
+===== FILE: scripts/diagrams/validate.mjs =====
+#!/usr/bin/env node
+// validate.mjs
+//
+// Structural validation for generated .excalidraw files.
+//
+//   node validate.mjs <dir>
+//
+// Asserts, per diagram:
+//   a) every containerId references an existing element
+//   b) every arrow startBinding/endBinding elementId references an existing element
+//   c) every bound text/arrow is listed in its container's boundElements
+//   d) no two non-container rectangles overlap
+//   e) no element has NaN/undefined in x, y, width, height
+//   f) every text label fits its container's width given the width estimator
+// Plus: minimum font sizes for projector legibility, and determinism markers.
+
+import { readFileSync, readdirSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { charWidth, wrapText, LINE_HEIGHT, BOX_PAD } from './diagram-kit.mjs';
+
+const MIN_BODY_FONT = 16;
+const MIN_SIBLING_GAP = 40;
+
+function isFinitePositive(n) {
+  return typeof n === 'number' && Number.isFinite(n);
+}
+
+function overlaps(a, b) {
+  return (
+    a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
+  );
+}
+
+function contains(outer, inner) {
+  return (
+    outer.x <= inner.x &&
+    outer.y <= inner.y &&
+    outer.x + outer.width >= inner.x + inner.width &&
+    outer.y + outer.height >= inner.y + inner.height &&
+    (outer.width > inner.width || outer.height > inner.height)
+  );
+}
+
+function validate(file, doc) {
+  const errors = [];
+  const warnings = [];
+  const els = doc.elements;
+  const byId = new Map(els.map((e) => [e.id, e]));
+
+  // --- (e) numeric sanity -------------------------------------------------
+  for (const e of els) {
+    for (const k of ['x', 'y', 'width', 'height']) {
+      if (!isFinitePositive(e[k])) {
+        errors.push(`(e) ${e.id} [${e.type}] has non-finite ${k}: ${e[k]}`);
+      }
+    }
+    if (e.width < 0 || e.height < 0) {
+      errors.push(`(e) ${e.id} [${e.type}] has negative size ${e.width}x${e.height}`);
+    }
+    if (e.updated !== 1) {
+      errors.push(`(det) ${e.id} has updated=${e.updated}, expected the fixed constant 1`);
+    }
+    for (const k of [
+      'id', 'type', 'angle', 'strokeColor', 'backgroundColor', 'fillStyle', 'strokeWidth',
+      'strokeStyle', 'roughness', 'opacity', 'groupIds', 'frameId', 'seed', 'versionNonce',
+      'version', 'isDeleted', 'boundElements', 'updated', 'locked',
+    ]) {
+      if (!(k in e)) errors.push(`(schema) ${e.id} [${e.type}] missing required property "${k}"`);
+    }
+    if (!('roundness' in e)) errors.push(`(schema) ${e.id} missing roundness`);
+    if (!('link' in e)) errors.push(`(schema) ${e.id} missing link`);
+  }
+
+  // --- (a) containerId ----------------------------------------------------
+  for (const e of els) {
+    if (e.type !== 'text') continue;
+    if (e.containerId === null || e.containerId === undefined) continue;
+    if (!byId.has(e.containerId)) {
+      errors.push(`(a) text ${e.id} has containerId ${e.containerId} which does not exist`);
+    }
+  }
+
+  // --- (b) arrow bindings -------------------------------------------------
+  for (const e of els) {
+    if (e.type !== 'arrow') continue;
+    for (const side of ['startBinding', 'endBinding']) {
+      const b = e[side];
+      if (!b) {
+        warnings.push(`(b) arrow ${e.id} has no ${side}`);
+        continue;
+      }
+      if (!byId.has(b.elementId)) {
+        errors.push(`(b) arrow ${e.id} ${side} -> ${b.elementId} which does not exist`);
+      }
+    }
+    if (!Array.isArray(e.points) || e.points.length < 2) {
+      errors.push(`(b) arrow ${e.id} has fewer than two points`);
+    }
+  }
+
+  // --- (c) reciprocal boundElements ---------------------------------------
+  const listed = (containerId, kind, id) => {
+    const c = byId.get(containerId);
+    if (!c) return false;
+    return (c.boundElements ?? []).some((b) => b.id === id && b.type === kind);
+  };
+  for (const e of els) {
+    if (e.type === 'text' && e.containerId) {
+      if (!listed(e.containerId, 'text', e.id)) {
+        errors.push(`(c) container ${e.containerId} does not list bound text ${e.id}`);
+      }
+    }
+    if (e.type === 'arrow') {
+      for (const side of ['startBinding', 'endBinding']) {
+        const b = e[side];
+        if (b && !listed(b.elementId, 'arrow', e.id)) {
+          errors.push(`(c) ${b.elementId} does not list bound arrow ${e.id} (${side})`);
+        }
+      }
+    }
+  }
+  // and the reverse direction: everything listed must exist
+  for (const e of els) {
+    for (const b of e.boundElements ?? []) {
+      if (!byId.has(b.id)) {
+        errors.push(`(c) ${e.id} lists boundElement ${b.id} which does not exist`);
+      }
+    }
+  }
+
+  // --- (d) rectangle overlap ----------------------------------------------
+  const rects = els.filter((e) => e.type === 'rectangle');
+  const containersSet = new Set();
+  for (const a of rects) {
+    for (const b of rects) {
+      if (a === b) continue;
+      if (contains(a, b)) containersSet.add(a.id);
+    }
+  }
+  const leaves = rects.filter((r) => !containersSet.has(r.id));
+  for (let i = 0; i < leaves.length; i += 1) {
+    for (let j = i + 1; j < leaves.length; j += 1) {
+      if (overlaps(leaves[i], leaves[j])) {
+        errors.push(
+          `(d) leaf rectangles overlap: ${leaves[i].id} ` +
+            `(${leaves[i].x},${leaves[i].y} ${leaves[i].width}x${leaves[i].height}) and ` +
+            `${leaves[j].id} (${leaves[j].x},${leaves[j].y} ${leaves[j].width}x${leaves[j].height})`,
+        );
+      }
+    }
+  }
+  // sibling clearance: leaves sharing a parent container should be >= 40px apart
+  for (let i = 0; i < leaves.length; i += 1) {
+    for (let j = i + 1; j < leaves.length; j += 1) {
+      const a = leaves[i];
+      const b = leaves[j];
+      if (overlaps(a, b)) continue;
+      const dx = Math.max(a.x - (b.x + b.width), b.x - (a.x + a.width));
+      const dy = Math.max(a.y - (b.y + b.height), b.y - (a.y + a.height));
+      const gap = Math.max(dx, dy);
+      if (gap < MIN_SIBLING_GAP - 0.5 && gap >= 0) {
+        // only complain when the two boxes actually share a band (i.e. are visual siblings)
+        const bandX = a.x < b.x + b.width && b.x < a.x + a.width;
+        const bandY = a.y < b.y + b.height && b.y < a.y + a.height;
+        if (bandX || bandY) {
+          // Legend key swatches are intentionally dense; they are a key, not content.
+          const isSwatch = (r) => r.width <= 32 && r.height <= 32;
+          if (!isSwatch(a) && !isSwatch(b)) {
+            warnings.push(
+              `(d) siblings ${a.id} and ${b.id} are only ${gap.toFixed(1)}px apart (want >= ${MIN_SIBLING_GAP})`,
+            );
+          }
+        }
+      }
+    }
+  }
+
+  // --- (g) free body text must not spill out of the box it sits in --------
+  for (const t of els) {
+    if (t.type !== 'text' || t.containerId) continue;
+    for (const r of leaves) {
+      const insideX = t.x >= r.x - 1 && t.x + t.width <= r.x + r.width + 1;
+      const startsInside = t.y >= r.y - 1 && t.y <= r.y + r.height;
+      if (insideX && startsInside) {
+        const th = t.text.split('\n').length * t.fontSize * LINE_HEIGHT;
+        if (t.y + th > r.y + r.height + 1) {
+          errors.push(
+            `(g) free text ${t.id} overflows the bottom of box ${r.id} by ` +
+              `${(t.y + th - r.y - r.height).toFixed(0)}px: "${t.text.split('\n')[0].slice(0, 50)}"`,
+          );
+        }
+      }
+    }
+  }
+
+  // --- (h) a leaf box must never straddle a group border ------------------
+  const containerRects = rects.filter((r) => containersSet.has(r.id));
+  for (const leaf of leaves) {
+    for (const c of containerRects) {
+      if (overlaps(leaf, c) && !contains(c, leaf)) {
+        errors.push(`(h) box ${leaf.id} straddles the border of group ${c.id}`);
+      }
+    }
+  }
+
+  // --- (f) text fits ------------------------------------------------------
+  for (const e of els) {
+    if (e.type !== 'text') continue;
+    const family = e.fontFamily ?? 2;
+    const cw = charWidth(e.fontSize, family);
+    const longest = e.text.split('\n').reduce((m, l) => Math.max(m, l.length * cw), 0);
+
+    if (e.containerId) {
+      const c = byId.get(e.containerId);
+      if (c && c.type !== 'arrow') {
+        const avail = c.width - 2 * BOX_PAD;
+        if (longest > avail + 0.5) {
+          errors.push(
+            `(f) bound text ${e.id} needs ${longest.toFixed(0)}px but container ${c.id} offers ${avail.toFixed(0)}px: "${e.text.split('\n')[0].slice(0, 60)}"`,
+          );
+        }
+        const lines = e.text.split('\n').length;
+        const th = lines * e.fontSize * LINE_HEIGHT;
+        if (th > c.height - 8) {
+          errors.push(
+            `(f) bound text ${e.id} needs ${th.toFixed(0)}px height, container ${c.id} is ${c.height}px`,
+          );
+        }
+      }
+    } else if (longest > e.width + 0.5) {
+      errors.push(
+        `(f) free text ${e.id} needs ${longest.toFixed(0)}px but declares width ${e.width}: "${e.text.split('\n')[0].slice(0, 60)}"`,
+      );
+    }
+
+    // Wrapping must be idempotent: re-wrapping must not produce more lines.
+    const rewrapped = wrapText(e.text, e.fontSize, e.width, family);
+    if (rewrapped.length > e.text.split('\n').length) {
+      errors.push(`(f) text ${e.id} would re-wrap to more lines than it declares`);
+    }
+
+    if (e.fontSize < MIN_BODY_FONT) {
+      errors.push(`(legibility) text ${e.id} fontSize ${e.fontSize} < ${MIN_BODY_FONT}`);
+    }
+    if (e.lineHeight !== LINE_HEIGHT) {
+      errors.push(`(schema) text ${e.id} lineHeight ${e.lineHeight} != ${LINE_HEIGHT}`);
+    }
+  }
+
+  // --- diagram-level requirements -----------------------------------------
+  const texts = els.filter((e) => e.type === 'text');
+  if (!texts.some((t) => t.fontSize >= 28)) {
+    errors.push('(title) no element at title size (>= 28) — every diagram needs a title');
+  }
+  if (!texts.some((t) => /Conclusion:/.test(t.originalText ?? ''))) {
+    errors.push('(subtitle) no one-sentence subtitle stating the conclusion');
+  }
+  if (!texts.some((t) => /^Legend/.test(t.originalText ?? ''))) {
+    errors.push('(legend) no legend — colour without a stated meaning is decoration');
+  }
+
+  return { file, errors, warnings, elementCount: els.length };
+}
+
+function main() {
+  const dir = resolve(process.cwd(), process.argv[2] ?? 'out');
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith('.excalidraw'))
+    .sort();
+  if (files.length === 0) {
+    process.stderr.write(`No .excalidraw files in ${dir}\n`);
+    process.exit(1);
+  }
+
+  let failed = 0;
+  let totalWarn = 0;
+  for (const f of files) {
+    const raw = readFileSync(join(dir, f), 'utf8');
+    let doc;
+    try {
+      doc = JSON.parse(raw);
+    } catch (err) {
+      process.stderr.write(`FAIL ${f}: not valid JSON — ${err.message}\n`);
+      failed += 1;
+      continue;
+    }
+    const r = validate(f, doc);
+    const bounds = doc.elements.reduce(
+      (acc, e) => {
+        const xs = Array.isArray(e.points) ? e.points.map((p) => e.x + p[0]) : [e.x, e.x + e.width];
+        const ys = Array.isArray(e.points) ? e.points.map((p) => e.y + p[1]) : [e.y, e.y + e.height];
+        return {
+          minX: Math.min(acc.minX, ...xs),
+          minY: Math.min(acc.minY, ...ys),
+          maxX: Math.max(acc.maxX, ...xs),
+          maxY: Math.max(acc.maxY, ...ys),
+        };
+      },
+      { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity },
+    );
+    const dims = `${Math.round(bounds.maxX - bounds.minX)} x ${Math.round(bounds.maxY - bounds.minY)}`;
+    if (r.errors.length === 0) {
+      process.stdout.write(
+        `PASS ${f.padEnd(34)} ${String(r.elementCount).padStart(4)} elements  canvas ${dims}` +
+          `${r.warnings.length ? `  (${r.warnings.length} warning${r.warnings.length > 1 ? 's' : ''})` : ''}\n`,
+      );
+    } else {
+      failed += 1;
+      process.stdout.write(`FAIL ${f.padEnd(34)} ${r.errors.length} error(s)\n`);
+      for (const e of r.errors.slice(0, 40)) process.stdout.write(`       ${e}\n`);
+      if (r.errors.length > 40) process.stdout.write(`       … ${r.errors.length - 40} more\n`);
+    }
+    for (const w of r.warnings.slice(0, 20)) process.stdout.write(`  warn ${w}\n`);
+    totalWarn += r.warnings.length;
+  }
+
+  process.stdout.write(
+    `\n${files.length - failed}/${files.length} diagrams valid, ${totalWarn} warning(s).\n`,
+  );
+  process.exit(failed === 0 ? 0 : 1);
+}
+
+main();
+
+===== FILE: docs/diagrams/README.md =====
+# Architecture diagrams
+
+Four Excalidraw diagrams of the Governed AI Exchange. They are **generated build output, not
+drawings** — do not hand-edit the `.excalidraw` files; edit the generator and re-run it.
+
+| File | Answers |
+|---|---|
+| `01-platform-topology.excalidraw` | Where does everything run, and what is reachable from the internet? |
+| `02-request-decision-flow.excalidraw` | What happens to one request, and in what order? |
+| `03-agent-architecture.excalidraw` | Who are the agents, what may they touch, and where does a human intervene? |
+| `04-ui-screen-map.excalidraw` | Which screen carries which demo beat? |
+
+Each diagram states its claim in a `Conclusion:` subtitle. If a diagram no longer supports its own
+conclusion, the architecture changed and the conclusion is the thing to revisit first.
+
+## Viewing
+
+Open <https://excalidraw.com>, then **Menu → Open** and pick the file. Everything is local; nothing
+is uploaded. VS Code users can install the Excalidraw extension and open the file in place.
+
+## Regenerating
+
+```bash
+node scripts/diagrams/generate-diagrams.mjs --out docs/diagrams
+node scripts/diagrams/validate.mjs docs/diagrams
+```
+
+Or `task lint:diagrams`, which runs the drift check and the validator together.
+
+Generation is byte-for-byte reproducible: element ids come from a counter-based PRNG with a fixed
+seed and `updated` is pinned to `1`, so re-running never produces a spurious diff. CI runs
+`--check` and fails if the committed files differ from what the generator produces — which is what
+keeps the picture and the system from quietly diverging.
+
+## Editing
+
+- **Content** — `scripts/diagrams/diagrams.mjs`. One exported definition per diagram.
+- **Layout and element primitives** — `scripts/diagrams/diagram-kit.mjs`.
+- **Structural rules** — `scripts/diagrams/validate.mjs` checks text fits its container, boxes do
+  not overlap, arrow bindings resolve in both directions, and no box straddles a group border.
+
+## A standing caveat
+
+These diagrams follow the **Terraform**, not the prose, wherever the two disagree. Components that
+appear in `docs/architecture.md` but do not exist in the IaC are drawn as red dashed
+`NOT IN TERRAFORM` boxes rather than omitted, so the gap is visible instead of invisible. The
+current divergences are catalogued in [`../decisions-needed.md`](../decisions-needed.md) items 5–7.
+
 __SCAFFOLD_PAYLOAD_END__*/

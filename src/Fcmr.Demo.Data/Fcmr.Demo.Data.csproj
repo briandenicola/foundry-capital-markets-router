@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Fcmr.Demo.Data</RootNamespace>
+    <AssemblyName>Fcmr.Demo.Data</AssemblyName>
+  </PropertyGroup>
+
+  <!--
+    Dependency-free on purpose, like Fcmr.Router.Decisions. The demo fixtures must be generable
+    with no Azure resource, no network, and no SDK, because the no-Azure fallback path depends on
+    producing the same corpus offline that the cloud path ingests.
+  -->
+
+</Project>

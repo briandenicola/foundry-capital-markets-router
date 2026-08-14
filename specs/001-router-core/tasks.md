@@ -3,6 +3,9 @@
 Sequenced so that a demonstrable slice exists early and the riskiest unknowns resolve first.
 Target: feature-complete 2026-09-05.
 
+**Status key:** `[x]` complete and gated in CI · `[~]` partially delivered · unmarked = not started.
+Last updated 2026-08-14.
+
 ## Phase 0 — Foundation (day 1 to 2)
 
 - **T-001** Repo scaffold via scripts/bootstrap-repo.mjs; Taskfile tree; Directory.Packages.props;
@@ -31,10 +34,13 @@ Target: feature-complete 2026-09-05.
 
 - **T-011** router-service skeleton, health endpoint, correlation-ID middleware, Application
   Insights wiring.
-- **T-012** Complexity scoring: pure, deterministic, exhaustively unit-tested. This is the
-  coverage-gated assembly.
-- **T-013** Tier selection and cost ceiling enforcement, including the downgrade-versus-deny
-  branch.
+- [x] **T-012** Complexity scoring: pure, deterministic, exhaustively unit-tested. This is the
+  coverage-gated assembly. *(Done — `Fcmr.Router.Decisions` at 93.6% line coverage.)*
+- [x] **T-013** Tier selection and cost ceiling enforcement, including the downgrade-versus-deny
+  branch. *(Done, and extended for multi-vendor catalogs. Two defects fixed in the process: the
+  candidate list marked every same-tier model as selected, which would have mis-attributed
+  scoreboard cost the moment Feature 002 put four vendors in one tier; and within-tier selection
+  took the first match rather than the cheapest.)*
 - **T-014** Decision persistence to Cosmos plus telemetry. **Validate the Application Insights
   latency and sampling assumption here against the AC-5 five-second budget, and build the Cosmos
   change-feed fallback behind configuration regardless.**
@@ -50,7 +56,7 @@ Target: feature-complete 2026-09-05.
 
 ## Phase 4 — Lanes (day 9 to 15, parallelisable)
 
-- **T-021** Synthetic data generators: research corpus, e-comms, order flow, blotters. Seeded and
+- [x] **T-021** Synthetic data generators: research corpus, e-comms, order flow, blotters. Seeded and
   reproducible.
 - **T-022** AI Search index and ingestion for the research corpus.
 - **T-023** research-service: retrieval-grounded synthesis, per-claim attribution, unattributable
@@ -92,14 +98,18 @@ Twelve screens; see `docs/ui-design.md` for the inventory, component layout, and
 Three of the four wow moments are screens in this phase.
 
 - **T-028** Vite, React, and TypeScript shell; Entra authentication; role-aware navigation.
-  - **T-028a** App shell, routing, error boundary, and the projector-grade type scale. Every screen
+  - [x] **T-028a** App shell, routing, error boundary, and the projector-grade type scale. Every screen
     has one number that is deliberately the largest thing on it.
   - **T-028b** MSAL auth, `Router.Invoke` / `Router.Read` / `Approver` role guards. Unauthorised
     navigation is hidden; unauthorised *actions* render disabled with a stated reason — Beat 6
     needs something visible to refuse.
-  - **T-028c** API client, token acquisition, and **types generated from `contracts/`**. Not
+  - [~] **T-028c** API client, token acquisition, and **types generated from `contracts/`**. Not
     hand-written; hand-written types drift and the drift surfaces on stage.
-  - **T-028d** The five required states as shared primitives: loading, empty, error, partial,
+    *(Client and generated types done, gated by the `api-types` CI job. Token acquisition waits on
+    T-028b. **Deviation:** types are generated from the C# records rather than from the contract
+    JSON, because an example payload cannot distinguish an optional field from one that happened to
+    be null — the C# type system already carries that information and the contract examples do not.)*
+  - [x] **T-028d** The five required states as shared primitives: loading, empty, error, partial,
     degraded. Build these before the screens that need them.
   - **T-028e** Request console (screen 1), including data classification on the request.
 - **T-029** Live scoreboard: cost, latency, tier, rationale, quality, within the five-second

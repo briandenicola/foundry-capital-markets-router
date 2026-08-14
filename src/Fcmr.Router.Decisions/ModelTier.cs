@@ -19,4 +19,16 @@ public enum RoutingOutcome
 
     /// <summary>Not routed. Even the cheapest viable tier exceeded the ceiling.</summary>
     Denied,
+
+    /// <summary>
+    /// Not routed. Governance policy left no eligible model.
+    ///
+    /// Deliberately distinct from <see cref="Denied"/>. "Too expensive" and "not permitted" are
+    /// different conversations with different people, and collapsing them would lose that.
+    ///
+    /// This is a successful, governed outcome carried on a 200 response, never an error status.
+    /// Modelling it as a failure would invite retry-on-error logic, and the one thing that must
+    /// never happen is a retry that finds an unapproved model.
+    /// </summary>
+    RefusedByPolicy,
 }

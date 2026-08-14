@@ -91,6 +91,32 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm run test --if-present
 
+  api-types:
+    name: generated api types in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The UI's types are generated from the C# decision library. If a contract type changes and
+      # the types are not regenerated, the drift shows up on stage rather than here.
+      - run: node scripts/generate-api-types.mjs --check
+
+  diagrams:
+    name: architecture diagrams in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The .excalidraw files are build output, not drawings. Regenerating them here is what stops
+      # the architecture picture quietly diverging from the architecture, which is the failure mode
+      # that makes diagrams untrustworthy and therefore unused.
+      - run: node scripts/diagrams/generate-diagrams.mjs --out docs/diagrams --check
+      - run: node scripts/diagrams/validate.mjs docs/diagrams
+
   preview-sdk-pins:
     name: preview sdk pin guard
     runs-on: ubuntu-latest
