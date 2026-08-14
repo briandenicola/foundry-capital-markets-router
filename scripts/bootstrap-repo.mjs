@@ -766,15 +766,24 @@ tasks:
   up:
     desc: Stand up the private Azure platform for {{.TITLE}}
     cmds:
+      - task: preflight
       - task: guard
       - task: init
       - task: apply
+
+  preflight:
+    desc: Verify the model catalog, providers, and quota against live Azure before creating anything
+    cmds:
+      - ./scripts/preflight-azure.sh {{.REGION}}
+    vars:
+      REGION: '{{.REGION | default "eastus2"}}'
 
   guard:
     desc: Refuse to proceed if Terraform state is local or the stacks are misaligned
     cmds:
       - ./scripts/guard-local-terraform-state.sh
       - ./scripts/policy-no-public-endpoints.sh
+      - ./scripts/policy-no-development-environment.sh
 
   init:
     desc: Initialise both Terraform stacks against remote state
@@ -2522,7 +2531,11 @@ Last updated 2026-08-14.
 - **T-006** Private endpoints and private DNS zones for Cosmos, AI Search, Key Vault, the registry,
   and AI Foundry.
 - **T-007** AI Foundry project, model deployments for the Economy, Standard, and Premium tiers, and
-  the Foundry managed VNet.
+  the Foundry managed VNet. *(Terraform written: `infrastructure/model-deployments.tf` creates one
+  serverless deployment per approved catalog entry across three vendors. Every model name, format,
+  version, and SKU was verified against `az cognitiveservices model list` in eastus2, and
+  `scripts/preflight-azure.sh` re-verifies them before any apply. **Unapplied** — nothing here is
+  proven until it runs.)*
 - **T-008** APIM as AI gateway: token metering, cost ceiling policy, content safety.
 - **T-009** apps stack: managed identities, least-privilege role assignments, Entra app
   registration with the Approver, Router.Invoke, and Router.Read app roles.
@@ -4957,7 +4970,10 @@ variable "model_catalog" {
     models are interchangeable and swappable by policy without an application change.
 
     serving is one of:
-      "serverless"      - Azure-hosted endpoint, billed per token.
+      "serverless"      - Azure-hosted endpoint, billed per token. Requires format and
+                          model_version, both of which must match what the region actually
+                          offers. scripts/preflight-azure.sh verifies every entry against
+                          `az cognitiveservices model list` before a single resource is created.
       "managed_compute" - dedicated accelerator capacity in the Foundry account, serving a model
                           from the Azure HuggingFace registry (PREVIEW).
 
@@ -4972,6 +4988,10 @@ variable "model_catalog" {
     cost_per_request_usd = number
     approved             = optional(bool, true)
 
+    # serverless only
+    format        = optional(string)
+    model_version = optional(string)
+
     # managed_compute only
     accelerator         = optional(string)
     capacity            = optional(number, 1)
@@ -4985,30 +5005,40 @@ variable "model_catalog" {
       model_name           = "gpt-5.4-mini"
       serving              = "serverless"
       cost_per_request_usd = 0.004
+      format               = "OpenAI"
+      model_version        = "2026-03-17"
     }
     aoai_standard = {
       vendor               = "AzureOpenAI"
       model_name           = "gpt-5.4"
       serving              = "serverless"
       cost_per_request_usd = 0.031
+      format               = "OpenAI"
+      model_version        = "2026-03-05"
     }
     aoai_premium = {
       vendor               = "AzureOpenAI"
       model_name           = "gpt-5.6-sol"
       serving              = "serverless"
       cost_per_request_usd = 0.180
+      format               = "OpenAI"
+      model_version        = "2026-07-09"
     }
     anthropic = {
       vendor               = "Anthropic"
       model_name           = "claude-sonnet-4-5"
       serving              = "serverless"
       cost_per_request_usd = 0.090
+      format               = "Anthropic"
+      model_version        = "20250929"
     }
     xai = {
       vendor               = "xAI"
       model_name           = "grok-4.3"
       serving              = "serverless"
       cost_per_request_usd = 0.075
+      format               = "xAI"
+      model_version        = "1"
     }
     openweight = {
       vendor               = "OpenWeight"
@@ -5034,6 +5064,19 @@ variable "enable_managed_compute" {
   EOT
   type        = bool
   default     = true
+}
+
+variable "model_deployment_capacity" {
+  description = <<-EOT
+    Capacity (TPM units) per serverless deployment.
+
+    Sized to prove a routing decision, not to serve load. Six deployments across three vendors
+    draw on the same regional quota, and quota is the scarcest thing in a demo subscription --
+    raising this is the most likely way to make an apply fail with an error that reads like a
+    permissions problem.
+  EOT
+  type        = number
+  default     = 1
 }
 
 ===== FILE: infrastructure/locals.tf =====
@@ -13622,5 +13665,276 @@ if [ "$FAILED" -ne 0 ]; then
 fi
 
 echo "PASS: no deployment artefact selects the Development environment or disables app-role enforcement."
+
+===== FILE: scripts/preflight-azure.sh =====
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Pre-flight for `terraform apply` on infrastructure/.
+#
+# Everything here answers one question: will the apply fail, and can we know that in ten seconds
+# instead of forty minutes? Model deployments fail on region-specific facts -- a format string, a
+# version, a quota ceiling -- and they fail late, after the account and network already exist.
+# Managed compute is worse: it can run for the better part of an hour before telling you the
+# accelerator was never available.
+#
+# This reads the catalog from infrastructure/variables.tf rather than restating it. A pre-flight
+# that carries its own copy of the thing it validates will pass on the day the two disagree,
+# which is the only day it matters.
+#
+# Read-only. Creates nothing, changes nothing, and needs no Terraform state or backend.
+#
+# Usage: scripts/preflight-azure.sh [region]
+
+REGION="${1:-eastus2}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+FAILURES=0
+WARNINGS=0
+
+red()   { printf '\033[31m%s\033[0m\n' "$*"; }
+green() { printf '\033[32m%s\033[0m\n' "$*"; }
+yellow(){ printf '\033[33m%s\033[0m\n' "$*"; }
+head2() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
+
+fail() { red "  FAIL  $*"; FAILURES=$((FAILURES + 1)); }
+warn() { yellow "  WARN  $*"; WARNINGS=$((WARNINGS + 1)); }
+ok()   { green "  ok    $*"; }
+
+for tool in az terraform jq; do
+  command -v "$tool" >/dev/null 2>&1 || { red "$tool is required and was not found on PATH."; exit 2; }
+done
+
+head2 "Subscription"
+if ! ACCOUNT=$(az account show -o json 2>/dev/null); then
+  red "  Not logged in. Run: az login"
+  exit 2
+fi
+echo "  $(jq -r '.name' <<<"$ACCOUNT")  ($(jq -r '.id' <<<"$ACCOUNT"))"
+echo "  $(jq -r '.user.name' <<<"$ACCOUNT")"
+echo "  region under test: ${REGION}"
+
+# ---------------------------------------------------------------------------
+# Resource providers. An unregistered provider fails the apply well after the
+# resource group exists, and the message names an API, not a fix.
+# ---------------------------------------------------------------------------
+head2 "Resource providers"
+REQUIRED_PROVIDERS=(
+  Microsoft.CognitiveServices
+  Microsoft.DocumentDB
+  Microsoft.Search
+  Microsoft.App
+  Microsoft.KeyVault
+  Microsoft.ContainerRegistry
+  Microsoft.OperationalInsights
+  Microsoft.Network
+  Microsoft.ManagedIdentity
+)
+REGISTERED=$(az provider list --query "[].{ns:namespace, state:registrationState}" -o json)
+for ns in "${REQUIRED_PROVIDERS[@]}"; do
+  state=$(jq -r --arg ns "$ns" '.[] | select(.ns==$ns) | .state' <<<"$REGISTERED")
+  case "$state" in
+    Registered) ok "$ns" ;;
+    "")         fail "$ns not visible on this subscription" ;;
+    *)          fail "$ns is '$state'. Fix: az provider register --namespace $ns --wait" ;;
+  esac
+done
+
+# ---------------------------------------------------------------------------
+# The model catalog, read from the Terraform that will actually be applied.
+# ---------------------------------------------------------------------------
+head2 "Model catalog"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+cp "${REPO_ROOT}/infrastructure/variables.tf" "$WORK/"
+if ! (cd "$WORK" && terraform init -backend=false -input=false >/dev/null 2>&1); then
+  red "  Could not read the catalog: terraform init failed in an isolated copy of variables.tf."
+  exit 2
+fi
+CATALOG=$(cd "$WORK" && echo 'jsonencode(var.model_catalog)' | terraform console 2>/dev/null | head -1 | jq -r 'fromjson? // .' | jq -c '.' 2>/dev/null || true)
+if [[ -z "$CATALOG" || "$CATALOG" == "null" ]]; then
+  red "  Could not parse var.model_catalog from infrastructure/variables.tf."
+  exit 2
+fi
+echo "  $(jq -r 'length' <<<"$CATALOG") entries declared"
+
+DEPLOY_CAPACITY=$(cd "$WORK" && echo 'var.model_deployment_capacity' | terraform console 2>/dev/null | head -1 | tr -d '"' || echo 1)
+[[ "$DEPLOY_CAPACITY" =~ ^[0-9]+$ ]] || DEPLOY_CAPACITY=1
+
+AVAILABLE=$(az cognitiveservices model list -l "$REGION" -o json 2>/dev/null || echo '[]')
+if [[ "$(jq -r 'length' <<<"$AVAILABLE")" == "0" ]]; then
+  fail "No models returned for region '${REGION}'. Is the region name right, and does the subscription have Foundry access there?"
+fi
+
+head2 "Serverless deployments (region: ${REGION})"
+while IFS=$'\t' read -r key name fmt ver approved; do
+  [[ -z "$key" ]] && continue
+  if [[ "$approved" != "true" ]]; then
+    ok "$key — not approved, deliberately not deployed"
+    continue
+  fi
+  if [[ "$fmt" == "null" || "$ver" == "null" ]]; then
+    fail "$key ($name) is missing format or model_version"
+    continue
+  fi
+
+  match=$(jq -r --arg n "$name" '[.[] | select(.model.name==$n)]' <<<"$AVAILABLE")
+  if [[ "$(jq -r 'length' <<<"$match")" == "0" ]]; then
+    fail "$key — model '$name' is not offered in ${REGION}"
+    continue
+  fi
+
+  actual_fmt=$(jq -r '.[0].model.format' <<<"$match")
+  if [[ "$actual_fmt" != "$fmt" ]]; then
+    fail "$key — format is '$fmt', region says '$actual_fmt'"
+    continue
+  fi
+
+  if ! jq -e --arg v "$ver" '[.[] | select(.model.version==$v)] | length > 0' <<<"$match" >/dev/null; then
+    offered=$(jq -r '[.[].model.version] | unique | join(", ")' <<<"$match")
+    fail "$key — version '$ver' not offered. ${REGION} has: ${offered}"
+    continue
+  fi
+
+  if ! jq -e --arg v "$ver" '[.[] | select(.model.version==$v) | .model.skus[]?.name] | index("GlobalStandard")' <<<"$match" >/dev/null; then
+    skus=$(jq -r --arg v "$ver" '[.[] | select(.model.version==$v) | .model.skus[]?.name] | unique | join(", ")' <<<"$match")
+    fail "$key — GlobalStandard not available for '$name' v$ver. Offered: ${skus:-none}"
+    continue
+  fi
+
+  ok "$key — $name ($fmt, v$ver, GlobalStandard)"
+done < <(jq -r 'to_entries[] | select(.value.serving=="serverless")
+        | [.key, .value.model_name, (.value.format//"null"), (.value.model_version//"null"), (.value.approved|tostring)]
+        | @tsv' <<<"$CATALOG")
+
+# ---------------------------------------------------------------------------
+# Vendor spread. A single-vendor estate cannot demonstrate the one thing this
+# demo exists to demonstrate, and it fails silently -- everything still routes.
+# ---------------------------------------------------------------------------
+head2 "Vendor spread"
+VENDORS=$(jq -r '[.[] | select(.serving=="serverless" and .approved) | .vendor] | unique' <<<"$CATALOG")
+COUNT=$(jq -r 'length' <<<"$VENDORS")
+if [[ "$COUNT" -lt 2 ]]; then
+  fail "Only ${COUNT} approved vendor(s): $(jq -r 'join(", ")' <<<"$VENDORS"). 'Policy chooses the vendor' is unprovable with one."
+else
+  ok "${COUNT} vendors: $(jq -r 'join(", ")' <<<"$VENDORS")"
+fi
+
+# ---------------------------------------------------------------------------
+# Managed compute. Preview, slow, and the most expensive thing to get wrong.
+# ---------------------------------------------------------------------------
+head2 "Managed compute (preview)"
+MC=$(jq -c '[to_entries[] | select(.value.serving=="managed_compute")]' <<<"$CATALOG")
+if [[ "$(jq -r 'length' <<<"$MC")" == "0" ]]; then
+  ok "none declared"
+else
+  jq -r '.[] | "  declared: \(.key) — \(.value.model_name) on \(.value.accelerator // "?")"' <<<"$MC"
+  warn "Accelerator capacity comes from Foundry's GlobalManagedCompute pool and is not visible"
+  warn "to 'az vm list-usage'. It cannot be verified from here, provisioning takes up to an hour,"
+  warn "and it fails late. Provision it first and on its own, or set enable_managed_compute=false"
+  warn "to bring the estate up on the three serverless vendors while it is sorted out."
+fi
+
+# ---------------------------------------------------------------------------
+head2 "Quota"
+# Quota is per model, per SKU, and the entry is namespaced by service rather than by vendor --
+# OpenAI models sit under OpenAI.*, Anthropic and xAI both under AIServices.*. Matching on the
+# suffix avoids encoding that mapping here, where it would rot.
+USAGE=$(az cognitiveservices usage list -l "$REGION" -o json 2>/dev/null || echo '[]')
+if [[ "$(jq -r 'length' <<<"$USAGE")" == "0" ]]; then
+  warn "No usage data returned for ${REGION}; quota could not be checked."
+else
+  NEEDED=$(jq -r 'to_entries[] | select(.value.serving=="serverless" and .value.approved) | .value.model_name' <<<"$CATALOG")
+  while read -r m; do
+    [[ -z "$m" ]] && continue
+    row=$(jq -c --arg m "$m" '[.[] | select((.limit//0)>0) | select(.name.value|endswith("."+$m))] | .[0] // empty' <<<"$USAGE")
+    if [[ -z "$row" ]]; then
+      warn "$m — no quota entry in ${REGION}; the deployment may be refused"
+      continue
+    fi
+    cur=$(jq -r '.currentValue // 0' <<<"$row")
+    lim=$(jq -r '.limit' <<<"$row")
+    nm=$(jq -r '.name.value' <<<"$row")
+    if (( $(echo "$lim - $cur < $DEPLOY_CAPACITY" | bc -l) )); then
+      fail "$m — ${cur}/${lim} used, needs ${DEPLOY_CAPACITY}. Raise quota or lower model_deployment_capacity."
+    else
+      ok "$m — ${cur}/${lim} (${nm})"
+    fi
+  done <<<"$NEEDED"
+fi
+
+# ---------------------------------------------------------------------------
+head2 "Result"
+if [[ "$FAILURES" -gt 0 ]]; then
+  red "${FAILURES} blocking issue(s), ${WARNINGS} warning(s). Fix the failures before terraform apply."
+  exit 1
+fi
+green "No blocking issues. ${WARNINGS} warning(s)."
+echo
+echo "Next:"
+echo "  ./scripts/bootstrap-remote-state.sh    # once per subscription"
+echo "  terraform -chdir=infrastructure apply"
+
+===== FILE: infrastructure/model-deployments.tf =====
+# Serverless model deployments — the multi-vendor catalog the router actually routes to.
+#
+# Without these, `terraform apply` produces a Foundry account, a project, and nothing to call.
+# The router would start, pass every test, and refuse every request for want of a deployment.
+#
+# One deployment per approved serverless catalog entry, across three vendors. That spread is the
+# demo's central claim in resource form: the same request can land on OpenAI, Anthropic, or xAI,
+# and only policy decides which. A single-vendor estate cannot demonstrate that, however well the
+# router is written.
+#
+# format and model_version are not decoration. They are region-specific facts, and a wrong value
+# fails the deployment rather than degrading it. scripts/preflight-azure.sh verifies every entry
+# against `az cognitiveservices model list` before an apply, because discovering a bad version
+# during a rebuild is expensive and discovering it during the demo is fatal.
+#
+# Capacity is deliberately minimal. This estate is sized to prove a routing decision, not to
+# serve load, and TPM quota is the scarcest thing in a demo subscription.
+
+resource "azapi_resource" "model_deployment" {
+  for_each = {
+    for k, v in local.serverless_models : k => v if v.approved
+  }
+
+  type      = "Microsoft.CognitiveServices/accounts/deployments@2025-06-01"
+  name      = each.value.model_name
+  parent_id = azapi_resource.foundry.id
+
+  body = {
+    sku = {
+      name     = "GlobalStandard"
+      capacity = var.model_deployment_capacity
+    }
+    properties = {
+      model = {
+        format  = each.value.format
+        name    = each.value.model_name
+        version = each.value.model_version
+      }
+    }
+  }
+
+  response_export_values = ["*"]
+
+  # These create in parallel, which is usually fine and occasionally is not: concurrent creates
+  # against one account contend on the same quota ledger and can fail with a conflict that reads
+  # like a quota shortfall, sending you to look in the wrong place. If that happens, re-apply --
+  # it is not idempotency-unsafe -- or drop parallelism rather than hunting quota.
+  depends_on = [azapi_resource.foundry_project]
+
+  lifecycle {
+    precondition {
+      condition     = each.value.format != null && each.value.model_version != null
+      error_message = "Serverless catalog entry '${each.key}' needs format and model_version. Run scripts/preflight-azure.sh to get the values this region actually offers."
+    }
+  }
+}
+
+output "model_deployments" {
+  description = "Serverless model deployments, by catalog key. The router resolves tiers to these names."
+  value       = { for k, v in azapi_resource.model_deployment : k => v.name }
+}
 
 __SCAFFOLD_PAYLOAD_END__*/

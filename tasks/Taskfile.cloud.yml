@@ -16,15 +16,24 @@ tasks:
   up:
     desc: Stand up the private Azure platform for {{.TITLE}}
     cmds:
+      - task: preflight
       - task: guard
       - task: init
       - task: apply
+
+  preflight:
+    desc: Verify the model catalog, providers, and quota against live Azure before creating anything
+    cmds:
+      - ./scripts/preflight-azure.sh {{.REGION}}
+    vars:
+      REGION: '{{.REGION | default "eastus2"}}'
 
   guard:
     desc: Refuse to proceed if Terraform state is local or the stacks are misaligned
     cmds:
       - ./scripts/guard-local-terraform-state.sh
       - ./scripts/policy-no-public-endpoints.sh
+      - ./scripts/policy-no-development-environment.sh
 
   init:
     desc: Initialise both Terraform stacks against remote state

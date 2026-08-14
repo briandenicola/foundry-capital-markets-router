@@ -23,7 +23,11 @@ Last updated 2026-08-14.
 - **T-006** Private endpoints and private DNS zones for Cosmos, AI Search, Key Vault, the registry,
   and AI Foundry.
 - **T-007** AI Foundry project, model deployments for the Economy, Standard, and Premium tiers, and
-  the Foundry managed VNet.
+  the Foundry managed VNet. *(Terraform written: `infrastructure/model-deployments.tf` creates one
+  serverless deployment per approved catalog entry across three vendors. Every model name, format,
+  version, and SKU was verified against `az cognitiveservices model list` in eastus2, and
+  `scripts/preflight-azure.sh` re-verifies them before any apply. **Unapplied** — nothing here is
+  proven until it runs.)*
 - **T-008** APIM as AI gateway: token metering, cost ceiling policy, content safety.
 - **T-009** apps stack: managed identities, least-privilege role assignments, Entra app
   registration with the Approver, Router.Invoke, and Router.Read app roles.

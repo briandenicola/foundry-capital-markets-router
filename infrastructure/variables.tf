@@ -20,7 +20,10 @@ variable "model_catalog" {
     models are interchangeable and swappable by policy without an application change.
 
     serving is one of:
-      "serverless"      - Azure-hosted endpoint, billed per token.
+      "serverless"      - Azure-hosted endpoint, billed per token. Requires format and
+                          model_version, both of which must match what the region actually
+                          offers. scripts/preflight-azure.sh verifies every entry against
+                          `az cognitiveservices model list` before a single resource is created.
       "managed_compute" - dedicated accelerator capacity in the Foundry account, serving a model
                           from the Azure HuggingFace registry (PREVIEW).
 
@@ -35,6 +38,10 @@ variable "model_catalog" {
     cost_per_request_usd = number
     approved             = optional(bool, true)
 
+    # serverless only
+    format        = optional(string)
+    model_version = optional(string)
+
     # managed_compute only
     accelerator         = optional(string)
     capacity            = optional(number, 1)
@@ -48,30 +55,40 @@ variable "model_catalog" {
       model_name           = "gpt-5.4-mini"
       serving              = "serverless"
       cost_per_request_usd = 0.004
+      format               = "OpenAI"
+      model_version        = "2026-03-17"
     }
     aoai_standard = {
       vendor               = "AzureOpenAI"
       model_name           = "gpt-5.4"
       serving              = "serverless"
       cost_per_request_usd = 0.031
+      format               = "OpenAI"
+      model_version        = "2026-03-05"
     }
     aoai_premium = {
       vendor               = "AzureOpenAI"
       model_name           = "gpt-5.6-sol"
       serving              = "serverless"
       cost_per_request_usd = 0.180
+      format               = "OpenAI"
+      model_version        = "2026-07-09"
     }
     anthropic = {
       vendor               = "Anthropic"
       model_name           = "claude-sonnet-4-5"
       serving              = "serverless"
       cost_per_request_usd = 0.090
+      format               = "Anthropic"
+      model_version        = "20250929"
     }
     xai = {
       vendor               = "xAI"
       model_name           = "grok-4.3"
       serving              = "serverless"
       cost_per_request_usd = 0.075
+      format               = "xAI"
+      model_version        = "1"
     }
     openweight = {
       vendor               = "OpenWeight"
@@ -97,4 +114,17 @@ variable "enable_managed_compute" {
   EOT
   type        = bool
   default     = true
+}
+
+variable "model_deployment_capacity" {
+  description = <<-EOT
+    Capacity (TPM units) per serverless deployment.
+
+    Sized to prove a routing decision, not to serve load. Six deployments across three vendors
+    draw on the same regional quota, and quota is the scarcest thing in a demo subscription --
+    raising this is the most likely way to make an apply fail with an error that reads like a
+    permissions problem.
+  EOT
+  type        = number
+  default     = 1
 }
