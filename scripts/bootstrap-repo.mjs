@@ -582,9 +582,9 @@ MODEL_EMBEDDING=text-embedding-3-large
 # Managed compute is a preview capability: it provisions dedicated GPU capacity, is subject to
 # quota, and is slow to warm. Provision it early and never on the morning of the demo.
 ENABLE_MANAGED_COMPUTE=true
-MODEL_OPENWEIGHT=mistralai/Mistral-Small-3.2-24B-Instruct-2506
-MANAGED_COMPUTE_SKU=Standard_NC24ads_A100_v4
-MANAGED_COMPUTE_INSTANCE_COUNT=1
+MODEL_OPENWEIGHT=nvidia--nvidia-nemotron-3-nano-30b-a3b-fp8
+MANAGED_COMPUTE_ACCELERATOR=H100_80GB
+MANAGED_COMPUTE_CAPACITY=1
 
 # Router policy defaults
 DEFAULT_COST_CEILING_USD=0.25
@@ -3184,24 +3184,18 @@ deployment name. A concept the code cannot name is a concept policy cannot swap.
 **Managed compute is a preview capability, and it is the single largest delivery risk in this
 repository.** Specifically:
 
-1. **Quota.** GPU SKUs are quota-gated per region and the default quota is frequently zero. Verify
-   before planning anything:
-   ```bash
-   az quota show \
-     --scope /subscriptions/<sub>/providers/Microsoft.Compute/locations/eastus2 \
-     --resource-name standardNCADSA100v4Family
-   ```
-2. **Provisioning time.** Cluster creation plus model deployment is measured in tens of minutes,
-   not the couple of minutes a serverless deployment takes. This does not fit inside the
-   45-minute rebuild budget the rest of the platform stack is designed around.
-3. **Cost.** A100-backed capacity is expensive and bills while allocated. `scale_down_nodes_after_idle_duration`
-   is set to 30 minutes and `min_node_count` to 0 to limit the damage, but a warm demo means paid
-   idle time. Budget for it deliberately.
-4. **Terraform coverage is unverified.** The configuration in `infrastructure/managed-compute.tf`
-   uses `azurerm_machine_learning_compute_cluster` against the Foundry workspace. This has **not**
-   been validated against the provider version pinned here. If it does not converge, fall back to
-   `az ml` in a script and treat the cluster as out-of-band infrastructure. Do not discover this
-   on demo day.
+1. **Capacity.** Accelerator classes are finite per region and availability is not exposed by the
+   CLI. The only reliable check is an actual deployment. See the verification section below.
+2. **Provisioning time.** Deployment is measured in tens of minutes, not the couple of minutes a
+   serverless deployment takes. This does not fit inside the 45-minute rebuild budget the rest of
+   the platform stack is designed around.
+3. **Cost.** Dedicated accelerator capacity bills while allocated, and unlike an AML compute
+   cluster there is no scale-to-zero idle window to hide behind. A warm demo is paid time from the
+   moment it is provisioned. Budget for it deliberately, and destroy it when the demo season ends.
+4. **Preview API surface.** Both the project and the managed compute deployment use
+   `2026-05-15-preview` with schema validation disabled. Preview API versions are withdrawn without
+   ceremony. If a plan starts failing for no apparent reason, check whether the API version still
+   exists before debugging anything else.
 
 ### Mitigation
 
@@ -3210,10 +3204,41 @@ three serverless vendors, losing only the Restricted-data beat. **Provision mana
 ahead of the demo and leave it up.** Treat it as long-lived infrastructure, not as something the
 rebuild path creates.
 
+## How managed compute is actually provisioned
+
+Microsoft Foundry managed compute is **not** Azure ML / AI Hub managed compute. The two are
+routinely confused and the resource trees are unrelated. This ADR records the correct model,
+because an earlier revision of this repository got it wrong.
+
+| | AI Hub (wrong) | Microsoft Foundry (correct) |
+|---|---|---|
+| Account | `azurerm_ai_foundry` (an AML workspace) | `Microsoft.CognitiveServices/accounts`, `kind = "AIServices"`, `allowProjectManagement = true` |
+| Requires storage + key vault | Yes | No |
+| Compute | `azurerm_machine_learning_compute_cluster` | `Microsoft.CognitiveServices/accounts/managedComputeDeployments` |
+| Capacity unit | `vm_size`, e.g. `Standard_NC24ads_A100_v4` | `acceleratorType`, e.g. `A100_80GB`, `H100_80GB` |
+| Quota system | Subscription `Microsoft.Compute` NC-family vCPUs | Foundry `GlobalManagedCompute` pool |
+| Model source | Your own image or registry | `azureml://registries/azure-huggingface/...` |
+
+Three consequences follow from the right-hand column:
+
+1. **Everything is `azapi`.** The API versions involved (`2026-05-15-preview` for projects and
+   managed compute deployments) are not modelled by the azurerm provider. `schema_validation_enabled
+   = false` is required on the preview resources.
+2. **A model needs a matching deployment template.** `properties.model` and
+   `properties.deploymentTemplate` both come from the Azure HuggingFace registry, and the template
+   is paired to an accelerator class. An A100 template will not deploy onto H100 capacity.
+3. **Deployments are slow.** 60-minute Terraform timeouts are set deliberately, not defensively.
+
+The reference implementation is
+`briandenicola/ai-application-architectures/infrastructure/microsoft-foundry-managed-compute`.
+This repository follows it, with one deliberate divergence: the reference sets
+`publicNetworkAccess = "Enabled"` and `disableLocalAuth = false`. We set the opposite, and
+`scripts/policy-no-public-endpoints.sh` now greps for the camelCase azapi spelling so the
+chokepoint cannot be reopened silently.
+
 ## Verification status (checked 2026-08-14, eastus2)
 
-Model names in `infrastructure/variables.tf` were checked against
-`az cognitiveservices model list -l eastus2`:
+Model names were checked against `az cognitiveservices model list -l eastus2`:
 
 | Catalog entry | Status |
 |---|---|
@@ -3221,20 +3246,22 @@ Model names in `infrastructure/variables.tf` were checked against
 | `claude-sonnet-4-5` | Available |
 | `grok-4` | **Not available** — corrected to `grok-4.3` |
 
-**GPU quota in eastus2 is zero.** Confirmed by `az vm list-usage`:
+**Correction to an earlier claim in this ADR.** A previous revision reported "GPU quota in eastus2
+is zero" based on `az vm list-usage`, and concluded a quota request was on the critical path. That
+measurement was against the wrong quota system. `GlobalManagedCompute` capacity is allocated from
+a Foundry pool, not from the subscription's `Microsoft.Compute` NC-family vCPU limits, so those
+zeroes do not describe this deployment. `az cognitiveservices usage list -l eastus2` exposes
+`AIServices.GlobalProvisionedManaged` but no accelerator-class counter, so **managed compute
+capacity availability could not be confirmed from the CLI and remains unverified.**
 
-| Family | Used | Limit |
-|---|---|---|
-| Standard NCADS_A100_v4 | 0 | **0** |
-| Standard NCadsH100v5 | 0 | **0** |
-| Standard NCADSA10v4 | 0 | **0** |
+Verify it the only way that is conclusive — attempt one deployment, early:
 
-Managed compute therefore **cannot be provisioned today**. A quota increase must be requested and
-approved before `enable_managed_compute = true` will plan successfully. Quota requests are not
-instant; treat this as the critical path for the Restricted-data beat.
+```bash
+terraform -chdir=infrastructure apply -target=azapi_resource.managed_compute
+```
 
-Until quota is granted, run with `enable_managed_compute = false`. Three serverless vendors still
-demonstrate the exchange; only the Restricted-data destination is missing.
+Do this well before the demo. Capacity for a specific accelerator class in a specific region is
+the kind of constraint that surfaces at apply time and nowhere else.
 
 ## Alternatives considered
 
@@ -3337,10 +3364,15 @@ banned_pattern2='network_acls[[:space:]]*\{[^}]*default_action[[:space:]]*=[[:sp
 banned_pattern3='public_access_enabled[[:space:]]*=[[:space:]]*true'
 banned_pattern4='anonymous_pull_enabled[[:space:]]*=[[:space:]]*true'
 
+# azapi bodies express this as a camelCase string, so the azurerm patterns above miss it entirely.
+# The Foundry account is declared via azapi; without this the chokepoint could be opened silently.
+banned_pattern5='publicNetworkAccess[[:space:]]*=[[:space:]]*"Enabled"'
+banned_pattern6='disableLocalAuth[[:space:]]*=[[:space:]]*false'
+
 for stack in "${STACKS[@]}"; do
   [ -d "$stack" ] || continue
 
-  for pattern in "$banned_pattern" "$banned_pattern3" "$banned_pattern4"; do
+  for pattern in "$banned_pattern" "$banned_pattern3" "$banned_pattern4" "$banned_pattern5" "$banned_pattern6"; do
     if hits=$(grep -rnE "$pattern" "$stack" --include='*.tf' 2>/dev/null); then
       echo "FAIL: public data-plane exposure in ${stack}"
       echo "$hits"
@@ -3546,6 +3578,12 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 4.14"
     }
+    # Foundry accounts, projects, and managedComputeDeployments use preview API versions the
+    # azurerm provider does not model yet.
+    azapi = {
+      source  = "Azure/azapi"
+      version = "~> 2"
+    }
     random = {
       source  = "hashicorp/random"
       version = "~> 3.6"
@@ -3596,80 +3634,84 @@ variable "model_catalog" {
     The approved model catalog. Multi-vendor by design: the exchange's central claim is that
     models are interchangeable and swappable by policy without an application change.
 
-    serving is one of "serverless" (Azure-hosted endpoint) or "managed_compute" (dedicated GPU
-    capacity provisioned in the Foundry project; PREVIEW).
+    serving is one of:
+      "serverless"      - Azure-hosted endpoint, billed per token.
+      "managed_compute" - dedicated accelerator capacity in the Foundry account, serving a model
+                          from the Azure HuggingFace registry (PREVIEW).
+
+    managed_compute entries additionally require accelerator, capacity, model_uri, and
+    deployment_template. The template must match the accelerator class.
   EOT
 
   type = map(object({
     vendor               = string
-    model                = string
+    model_name           = string
     serving              = string
     cost_per_request_usd = number
     approved             = optional(bool, true)
+
+    # managed_compute only
+    accelerator         = optional(string)
+    capacity            = optional(number, 1)
+    model_uri           = optional(string)
+    deployment_template = optional(string)
   }))
 
   default = {
     aoai_economy = {
       vendor               = "AzureOpenAI"
-      model                = "gpt-5.4-mini"
+      model_name           = "gpt-5.4-mini"
       serving              = "serverless"
       cost_per_request_usd = 0.004
     }
     aoai_standard = {
       vendor               = "AzureOpenAI"
-      model                = "gpt-5.4"
+      model_name           = "gpt-5.4"
       serving              = "serverless"
       cost_per_request_usd = 0.031
     }
     aoai_premium = {
       vendor               = "AzureOpenAI"
-      model                = "gpt-5.6-sol"
+      model_name           = "gpt-5.6-sol"
       serving              = "serverless"
       cost_per_request_usd = 0.180
     }
     anthropic = {
       vendor               = "Anthropic"
-      model                = "claude-sonnet-4-5"
+      model_name           = "claude-sonnet-4-5"
       serving              = "serverless"
       cost_per_request_usd = 0.090
     }
     xai = {
       vendor               = "xAI"
-      model                = "grok-4.3"
+      model_name           = "grok-4.3"
       serving              = "serverless"
       cost_per_request_usd = 0.075
     }
     openweight = {
       vendor               = "OpenWeight"
-      model                = "mistralai/Mistral-Small-3.2-24B-Instruct-2506"
+      model_name           = "nvidia--nvidia-nemotron-3-nano-30b-a3b-fp8"
       serving              = "managed_compute"
       cost_per_request_usd = 0.002
+      accelerator          = "H100_80GB"
+      capacity             = 1
+      model_uri            = "azureml://registries/azure-huggingface/models/nvidia--nvidia-nemotron-3-nano-30b-a3b-fp8/versions/3"
+      deployment_template  = "azureml://registries/azure-huggingface/deploymenttemplates/nvidia--nvidia-nemotron-3-nano-30b-a3b-fp8--256k-nvidia-h100/labels/latest"
     }
   }
 }
 
 variable "enable_managed_compute" {
   description = <<-EOT
-    Provisions dedicated GPU capacity in the Foundry project for open-weight models.
+    Provisions dedicated accelerator capacity in the Foundry account for open-weight models,
+    via Microsoft.CognitiveServices/accounts/managedComputeDeployments.
 
-    This is a PREVIEW capability. It is subject to GPU quota, is slow to provision, and is the
-    single most likely reason a rebuild misses the 45-minute budget. Provision it well before
-    the demo and verify quota first. See docs/adr/006-multi-vendor-model-catalog.md.
+    This is a PREVIEW capability and is slow to provision -- it is the single most likely reason
+    a rebuild misses the 45-minute budget. Set it false to run the demo across the three
+    serverless vendors only. See docs/adr/006-multi-vendor-model-catalog.md.
   EOT
   type        = bool
   default     = true
-}
-
-variable "managed_compute_sku" {
-  description = "VM SKU backing managed compute. Requires GPU quota in the target region."
-  type        = string
-  default     = "Standard_NC24ads_A100_v4"
-}
-
-variable "managed_compute_instance_count" {
-  description = "Instance count for the managed compute deployment. Keep at 1 for a demo."
-  type        = number
-  default     = 1
 }
 
 ===== FILE: infrastructure/locals.tf =====
@@ -3803,6 +3845,11 @@ locals {
       subresource = "registry"
       dns_zone    = "privatelink.azurecr.io"
     }
+    foundry = {
+      resource_id = azapi_resource.foundry.id
+      subresource = "account"
+      dns_zone    = "privatelink.services.ai.azure.com"
+    }
   } : {}
 }
 
@@ -3890,7 +3937,7 @@ resource "azurerm_cosmosdb_account" "this" {
 
   public_network_access_enabled     = false
   is_virtual_network_filter_enabled = true
-  local_authentication_disabled     = true
+  local_authentication_enabled      = false
 
   consistency_policy {
     consistency_level = "Session"
@@ -3959,7 +4006,7 @@ resource "azurerm_key_vault" "this" {
   tenant_id           = data.azurerm_client_config.current.tenant_id
   sku_name            = "standard"
 
-  enable_rbac_authorization  = true
+  rbac_authorization_enabled = true
   purge_protection_enabled   = false
   soft_delete_retention_days = 7
 
@@ -3974,57 +4021,79 @@ resource "azurerm_key_vault" "this" {
 }
 
 ===== FILE: infrastructure/ai.tf =====
-# Azure AI Foundry. Hosted agents run here; the router is the only caller.
+# Microsoft Foundry.
+#
+# This is a Microsoft.CognitiveServices account with kind = "AIServices" and project management
+# enabled -- NOT an Azure ML / AI Hub workspace. The distinction matters: the AI Hub model
+# (azurerm_ai_foundry) is a different service with a different resource tree, requires a storage
+# account and key vault, and does not support managedComputeDeployments.
+#
+# Deployed via azapi because the required API versions are preview and are not yet modelled by the
+# azurerm provider. See docs/adr/006-multi-vendor-model-catalog.md.
+#
 # See ADR 005 and Principle V.
 
-resource "azurerm_ai_foundry" "this" {
-  name                = "${local.resource_name}-foundry"
-  resource_group_name = azurerm_resource_group.this.name
-  location            = azurerm_resource_group.this.location
-  storage_account_id  = azurerm_storage_account.foundry.id
-  key_vault_id        = azurerm_key_vault.this.id
+resource "azapi_resource" "foundry" {
+  type      = "Microsoft.CognitiveServices/accounts@2025-06-01"
+  name      = "${local.resource_name}-foundry"
+  parent_id = azurerm_resource_group.this.id
+  location  = azurerm_resource_group.this.location
+  tags      = local.tags
 
-  public_network_access = "Disabled"
+  body = {
+    kind = "AIServices"
+    sku = {
+      name = "S0"
+    }
+    identity = {
+      type = "SystemAssigned"
+    }
 
-  identity {
-    type = "SystemAssigned"
-  }
+    properties = {
+      # Principle II. The reference architecture leaves this Enabled; we do not.
+      # scripts/policy-no-public-endpoints.sh fails the build if this is flipped.
+      publicNetworkAccess = "Disabled"
 
-  dynamic "managed_network" {
-    for_each = var.enable_private_networking ? [1] : []
-    content {
-      isolation_mode = "AllowOnlyApprovedOutbound"
+      # Entra only. No account keys anywhere in this system (Principle VIII).
+      disableLocalAuth = true
+
+      allowProjectManagement = true
+      customSubDomainName    = "${local.resource_name}-foundry"
     }
   }
 
-  tags = local.tags
+  response_export_values = [
+    "identity.principalId",
+    "properties.endpoint",
+  ]
 }
 
-resource "azurerm_ai_foundry_project" "this" {
-  name               = "${local.resource_name}-proj"
-  location           = azurerm_ai_foundry.this.location
-  ai_services_hub_id = azurerm_ai_foundry.this.id
+resource "azapi_resource" "foundry_project" {
+  type      = "Microsoft.CognitiveServices/accounts/projects@2026-05-15-preview"
+  name      = "${local.resource_name}-proj"
+  parent_id = azapi_resource.foundry.id
+  location  = azurerm_resource_group.this.location
 
-  identity {
-    type = "SystemAssigned"
+  # Preview API; azapi has no schema for it yet.
+  schema_validation_enabled = false
+
+  body = {
+    sku = {
+      name = "S0"
+    }
+    identity = {
+      type = "SystemAssigned"
+    }
+    properties = {
+      displayName = "${local.resource_name}-proj"
+      description = "Capital markets governed AI exchange"
+    }
   }
 
-  tags = local.tags
-}
-
-resource "azurerm_storage_account" "foundry" {
-  name                = replace("${local.resource_name}fdy", "-", "")
-  resource_group_name = azurerm_resource_group.this.name
-  location            = azurerm_resource_group.this.location
-
-  account_tier                    = "Standard"
-  account_replication_type        = "LRS"
-  min_tls_version                 = "TLS1_2"
-  allow_nested_items_to_be_public = false
-  public_network_access_enabled   = false
-  shared_access_key_enabled       = false
-
-  tags = local.tags
+  response_export_values = [
+    "identity.principalId",
+    "properties.internalId",
+  ]
 }
 
 ===== FILE: infrastructure/outputs.tf =====
@@ -4074,11 +4143,25 @@ output "keyvault_id" {
 }
 
 output "foundry_endpoint" {
-  value = azurerm_ai_foundry.this.discovery_url
+  value = azapi_resource.foundry.output.properties.endpoint
+}
+
+output "foundry_id" {
+  value = azapi_resource.foundry.id
 }
 
 output "foundry_project_id" {
-  value = azurerm_ai_foundry_project.this.id
+  value = azapi_resource.foundry_project.id
+}
+
+output "foundry_project_endpoint" {
+  description = "Project endpoint the router uses to reach hosted agents."
+  value       = "https://${azapi_resource.foundry.name}.services.ai.azure.com/api/projects/${azapi_resource.foundry_project.name}"
+}
+
+output "foundry_principal_id" {
+  description = "System-assigned identity of the Foundry account, for role assignments."
+  value       = azapi_resource.foundry.output.identity.principalId
 }
 
 output "application_insights_connection_string" {
@@ -4104,16 +4187,19 @@ output "managed_compute_enabled" {
 }
 
 ===== FILE: infrastructure/managed-compute.tf =====
-# Open-weight models on Foundry managed compute. PREVIEW.
+# Open-weight models on Microsoft Foundry managed compute. PREVIEW.
 #
-# This is the highest-risk resource in the platform stack. Managed compute provisions dedicated
-# GPU capacity, which means it depends on regional GPU quota, takes far longer to come up than
-# a serverless deployment, and is the most likely single cause of a rebuild missing the
-# 45-minute budget.
+# managedComputeDeployments provisions dedicated accelerator capacity inside the Foundry account
+# and serves a model pulled from the Azure HuggingFace registry. Two things are worth knowing:
 #
-# Check quota before you plan:
-#   az quota show --scope /subscriptions/<sub>/providers/Microsoft.Compute/locations/<region> \
-#     --resource-name standardNCADSA100v4Family
+#   1. acceleratorType is a Foundry accelerator class ("A100_80GB", "H100_80GB"), NOT a
+#      Microsoft.Compute VM SKU. Capacity comes from Foundry's GlobalManagedCompute pool, so
+#      subscription NC-family vCPU quota is not what governs this.
+#   2. Each model needs a matching deploymentTemplate from the same registry. The template is
+#      paired to the accelerator; an A100 template will not deploy onto H100 capacity.
+#
+# Deployments routinely take tens of minutes, hence the 60m timeouts. This does not fit the
+# 45-minute rebuild budget -- provision it ahead of the demo and leave it up.
 #
 # See docs/adr/006-multi-vendor-model-catalog.md.
 
@@ -4127,36 +4213,41 @@ locals {
   }
 }
 
-resource "azurerm_machine_learning_compute_cluster" "openweight" {
+resource "azapi_resource" "managed_compute" {
   for_each = local.managed_compute_models
 
-  name                          = substr("mc-${each.key}", 0, 24)
-  location                      = azurerm_resource_group.this.location
-  machine_learning_workspace_id = azurerm_ai_foundry.this.id
-  vm_priority                   = "Dedicated"
-  vm_size                       = var.managed_compute_sku
+  type      = "Microsoft.CognitiveServices/accounts/managedComputeDeployments@2026-05-15-preview"
+  name      = each.value.model_name
+  parent_id = azapi_resource.foundry.id
 
-  # No public IP. Managed compute joins the private subnet like everything else; Principle II
-  # applies to GPU capacity exactly as it applies to a database.
-  node_public_ip_enabled = false
-  subnet_resource_id     = var.enable_private_networking ? azurerm_subnet.private_endpoints[0].id : null
+  schema_validation_enabled = false
 
-  scale_settings {
-    min_node_count                       = 0
-    max_node_count                       = var.managed_compute_instance_count
-    scale_down_nodes_after_idle_duration = "PT30M"
+  body = {
+    sku = {
+      name     = "GlobalManagedCompute"
+      capacity = each.value.capacity
+    }
+    properties = {
+      acceleratorType    = each.value.accelerator
+      deploymentTemplate = each.value.deployment_template
+      model              = each.value.model_uri
+    }
   }
 
-  identity {
-    type = "SystemAssigned"
+  response_export_values = ["*"]
+
+  timeouts {
+    create = "60m"
+    update = "60m"
+    delete = "60m"
   }
 
-  tags = local.tags
+  depends_on = [azapi_resource.foundry_project]
 }
 
-output "managed_compute_clusters" {
-  description = "Managed compute clusters backing open-weight models."
-  value       = { for k, v in azurerm_machine_learning_compute_cluster.openweight : k => v.id }
+output "managed_compute_deployments" {
+  description = "Managed compute deployments backing open-weight models."
+  value       = { for k, v in azapi_resource.managed_compute : k => v.id }
 }
 
 output "serverless_models" {

@@ -44,11 +44,25 @@ output "keyvault_id" {
 }
 
 output "foundry_endpoint" {
-  value = azurerm_ai_foundry.this.discovery_url
+  value = azapi_resource.foundry.output.properties.endpoint
+}
+
+output "foundry_id" {
+  value = azapi_resource.foundry.id
 }
 
 output "foundry_project_id" {
-  value = azurerm_ai_foundry_project.this.id
+  value = azapi_resource.foundry_project.id
+}
+
+output "foundry_project_endpoint" {
+  description = "Project endpoint the router uses to reach hosted agents."
+  value       = "https://${azapi_resource.foundry.name}.services.ai.azure.com/api/projects/${azapi_resource.foundry_project.name}"
+}
+
+output "foundry_principal_id" {
+  description = "System-assigned identity of the Foundry account, for role assignments."
+  value       = azapi_resource.foundry.output.identity.principalId
 }
 
 output "application_insights_connection_string" {

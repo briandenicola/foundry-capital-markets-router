@@ -23,6 +23,11 @@ locals {
       subresource = "registry"
       dns_zone    = "privatelink.azurecr.io"
     }
+    foundry = {
+      resource_id = azapi_resource.foundry.id
+      subresource = "account"
+      dns_zone    = "privatelink.services.ai.azure.com"
+    }
   } : {}
 }
 

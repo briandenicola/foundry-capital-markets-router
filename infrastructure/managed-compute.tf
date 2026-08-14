@@ -1,13 +1,16 @@
-# Open-weight models on Foundry managed compute. PREVIEW.
+# Open-weight models on Microsoft Foundry managed compute. PREVIEW.
 #
-# This is the highest-risk resource in the platform stack. Managed compute provisions dedicated
-# GPU capacity, which means it depends on regional GPU quota, takes far longer to come up than
-# a serverless deployment, and is the most likely single cause of a rebuild missing the
-# 45-minute budget.
+# managedComputeDeployments provisions dedicated accelerator capacity inside the Foundry account
+# and serves a model pulled from the Azure HuggingFace registry. Two things are worth knowing:
 #
-# Check quota before you plan:
-#   az quota show --scope /subscriptions/<sub>/providers/Microsoft.Compute/locations/<region> \
-#     --resource-name standardNCADSA100v4Family
+#   1. acceleratorType is a Foundry accelerator class ("A100_80GB", "H100_80GB"), NOT a
+#      Microsoft.Compute VM SKU. Capacity comes from Foundry's GlobalManagedCompute pool, so
+#      subscription NC-family vCPU quota is not what governs this.
+#   2. Each model needs a matching deploymentTemplate from the same registry. The template is
+#      paired to the accelerator; an A100 template will not deploy onto H100 capacity.
+#
+# Deployments routinely take tens of minutes, hence the 60m timeouts. This does not fit the
+# 45-minute rebuild budget -- provision it ahead of the demo and leave it up.
 #
 # See docs/adr/006-multi-vendor-model-catalog.md.
 
@@ -21,36 +24,41 @@ locals {
   }
 }
 
-resource "azurerm_machine_learning_compute_cluster" "openweight" {
+resource "azapi_resource" "managed_compute" {
   for_each = local.managed_compute_models
 
-  name                          = substr("mc-${each.key}", 0, 24)
-  location                      = azurerm_resource_group.this.location
-  machine_learning_workspace_id = azurerm_ai_foundry.this.id
-  vm_priority                   = "Dedicated"
-  vm_size                       = var.managed_compute_sku
+  type      = "Microsoft.CognitiveServices/accounts/managedComputeDeployments@2026-05-15-preview"
+  name      = each.value.model_name
+  parent_id = azapi_resource.foundry.id
 
-  # No public IP. Managed compute joins the private subnet like everything else; Principle II
-  # applies to GPU capacity exactly as it applies to a database.
-  node_public_ip_enabled = false
-  subnet_resource_id     = var.enable_private_networking ? azurerm_subnet.private_endpoints[0].id : null
+  schema_validation_enabled = false
 
-  scale_settings {
-    min_node_count                       = 0
-    max_node_count                       = var.managed_compute_instance_count
-    scale_down_nodes_after_idle_duration = "PT30M"
+  body = {
+    sku = {
+      name     = "GlobalManagedCompute"
+      capacity = each.value.capacity
+    }
+    properties = {
+      acceleratorType    = each.value.accelerator
+      deploymentTemplate = each.value.deployment_template
+      model              = each.value.model_uri
+    }
   }
 
-  identity {
-    type = "SystemAssigned"
+  response_export_values = ["*"]
+
+  timeouts {
+    create = "60m"
+    update = "60m"
+    delete = "60m"
   }
 
-  tags = local.tags
+  depends_on = [azapi_resource.foundry_project]
 }
 
-output "managed_compute_clusters" {
-  description = "Managed compute clusters backing open-weight models."
-  value       = { for k, v in azurerm_machine_learning_compute_cluster.openweight : k => v.id }
+output "managed_compute_deployments" {
+  description = "Managed compute deployments backing open-weight models."
+  value       = { for k, v in azapi_resource.managed_compute : k => v.id }
 }
 
 output "serverless_models" {

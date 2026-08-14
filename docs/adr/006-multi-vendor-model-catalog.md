@@ -54,24 +54,18 @@ deployment name. A concept the code cannot name is a concept policy cannot swap.
 **Managed compute is a preview capability, and it is the single largest delivery risk in this
 repository.** Specifically:
 
-1. **Quota.** GPU SKUs are quota-gated per region and the default quota is frequently zero. Verify
-   before planning anything:
-   ```bash
-   az quota show \
-     --scope /subscriptions/<sub>/providers/Microsoft.Compute/locations/eastus2 \
-     --resource-name standardNCADSA100v4Family
-   ```
-2. **Provisioning time.** Cluster creation plus model deployment is measured in tens of minutes,
-   not the couple of minutes a serverless deployment takes. This does not fit inside the
-   45-minute rebuild budget the rest of the platform stack is designed around.
-3. **Cost.** A100-backed capacity is expensive and bills while allocated. `scale_down_nodes_after_idle_duration`
-   is set to 30 minutes and `min_node_count` to 0 to limit the damage, but a warm demo means paid
-   idle time. Budget for it deliberately.
-4. **Terraform coverage is unverified.** The configuration in `infrastructure/managed-compute.tf`
-   uses `azurerm_machine_learning_compute_cluster` against the Foundry workspace. This has **not**
-   been validated against the provider version pinned here. If it does not converge, fall back to
-   `az ml` in a script and treat the cluster as out-of-band infrastructure. Do not discover this
-   on demo day.
+1. **Capacity.** Accelerator classes are finite per region and availability is not exposed by the
+   CLI. The only reliable check is an actual deployment. See the verification section below.
+2. **Provisioning time.** Deployment is measured in tens of minutes, not the couple of minutes a
+   serverless deployment takes. This does not fit inside the 45-minute rebuild budget the rest of
+   the platform stack is designed around.
+3. **Cost.** Dedicated accelerator capacity bills while allocated, and unlike an AML compute
+   cluster there is no scale-to-zero idle window to hide behind. A warm demo is paid time from the
+   moment it is provisioned. Budget for it deliberately, and destroy it when the demo season ends.
+4. **Preview API surface.** Both the project and the managed compute deployment use
+   `2026-05-15-preview` with schema validation disabled. Preview API versions are withdrawn without
+   ceremony. If a plan starts failing for no apparent reason, check whether the API version still
+   exists before debugging anything else.
 
 ### Mitigation
 
@@ -80,10 +74,41 @@ three serverless vendors, losing only the Restricted-data beat. **Provision mana
 ahead of the demo and leave it up.** Treat it as long-lived infrastructure, not as something the
 rebuild path creates.
 
+## How managed compute is actually provisioned
+
+Microsoft Foundry managed compute is **not** Azure ML / AI Hub managed compute. The two are
+routinely confused and the resource trees are unrelated. This ADR records the correct model,
+because an earlier revision of this repository got it wrong.
+
+| | AI Hub (wrong) | Microsoft Foundry (correct) |
+|---|---|---|
+| Account | `azurerm_ai_foundry` (an AML workspace) | `Microsoft.CognitiveServices/accounts`, `kind = "AIServices"`, `allowProjectManagement = true` |
+| Requires storage + key vault | Yes | No |
+| Compute | `azurerm_machine_learning_compute_cluster` | `Microsoft.CognitiveServices/accounts/managedComputeDeployments` |
+| Capacity unit | `vm_size`, e.g. `Standard_NC24ads_A100_v4` | `acceleratorType`, e.g. `A100_80GB`, `H100_80GB` |
+| Quota system | Subscription `Microsoft.Compute` NC-family vCPUs | Foundry `GlobalManagedCompute` pool |
+| Model source | Your own image or registry | `azureml://registries/azure-huggingface/...` |
+
+Three consequences follow from the right-hand column:
+
+1. **Everything is `azapi`.** The API versions involved (`2026-05-15-preview` for projects and
+   managed compute deployments) are not modelled by the azurerm provider. `schema_validation_enabled
+   = false` is required on the preview resources.
+2. **A model needs a matching deployment template.** `properties.model` and
+   `properties.deploymentTemplate` both come from the Azure HuggingFace registry, and the template
+   is paired to an accelerator class. An A100 template will not deploy onto H100 capacity.
+3. **Deployments are slow.** 60-minute Terraform timeouts are set deliberately, not defensively.
+
+The reference implementation is
+`briandenicola/ai-application-architectures/infrastructure/microsoft-foundry-managed-compute`.
+This repository follows it, with one deliberate divergence: the reference sets
+`publicNetworkAccess = "Enabled"` and `disableLocalAuth = false`. We set the opposite, and
+`scripts/policy-no-public-endpoints.sh` now greps for the camelCase azapi spelling so the
+chokepoint cannot be reopened silently.
+
 ## Verification status (checked 2026-08-14, eastus2)
 
-Model names in `infrastructure/variables.tf` were checked against
-`az cognitiveservices model list -l eastus2`:
+Model names were checked against `az cognitiveservices model list -l eastus2`:
 
 | Catalog entry | Status |
 |---|---|
@@ -91,20 +116,22 @@ Model names in `infrastructure/variables.tf` were checked against
 | `claude-sonnet-4-5` | Available |
 | `grok-4` | **Not available** — corrected to `grok-4.3` |
 
-**GPU quota in eastus2 is zero.** Confirmed by `az vm list-usage`:
+**Correction to an earlier claim in this ADR.** A previous revision reported "GPU quota in eastus2
+is zero" based on `az vm list-usage`, and concluded a quota request was on the critical path. That
+measurement was against the wrong quota system. `GlobalManagedCompute` capacity is allocated from
+a Foundry pool, not from the subscription's `Microsoft.Compute` NC-family vCPU limits, so those
+zeroes do not describe this deployment. `az cognitiveservices usage list -l eastus2` exposes
+`AIServices.GlobalProvisionedManaged` but no accelerator-class counter, so **managed compute
+capacity availability could not be confirmed from the CLI and remains unverified.**
 
-| Family | Used | Limit |
-|---|---|---|
-| Standard NCADS_A100_v4 | 0 | **0** |
-| Standard NCadsH100v5 | 0 | **0** |
-| Standard NCADSA10v4 | 0 | **0** |
+Verify it the only way that is conclusive — attempt one deployment, early:
 
-Managed compute therefore **cannot be provisioned today**. A quota increase must be requested and
-approved before `enable_managed_compute = true` will plan successfully. Quota requests are not
-instant; treat this as the critical path for the Restricted-data beat.
+```bash
+terraform -chdir=infrastructure apply -target=azapi_resource.managed_compute
+```
 
-Until quota is granted, run with `enable_managed_compute = false`. Three serverless vendors still
-demonstrate the exchange; only the Restricted-data destination is missing.
+Do this well before the demo. Capacity for a specific accelerator class in a specific region is
+the kind of constraint that surfaces at apply time and nowhere else.
 
 ## Alternatives considered
 

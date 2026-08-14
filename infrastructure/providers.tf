@@ -6,6 +6,12 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 4.14"
     }
+    # Foundry accounts, projects, and managedComputeDeployments use preview API versions the
+    # azurerm provider does not model yet.
+    azapi = {
+      source  = "Azure/azapi"
+      version = "~> 2"
+    }
     random = {
       source  = "hashicorp/random"
       version = "~> 3.6"

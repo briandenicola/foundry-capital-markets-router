@@ -7,7 +7,7 @@ resource "azurerm_cosmosdb_account" "this" {
 
   public_network_access_enabled     = false
   is_virtual_network_filter_enabled = true
-  local_authentication_disabled     = true
+  local_authentication_enabled      = false
 
   consistency_policy {
     consistency_level = "Session"

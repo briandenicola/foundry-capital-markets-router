@@ -1,52 +1,74 @@
-# Azure AI Foundry. Hosted agents run here; the router is the only caller.
+# Microsoft Foundry.
+#
+# This is a Microsoft.CognitiveServices account with kind = "AIServices" and project management
+# enabled -- NOT an Azure ML / AI Hub workspace. The distinction matters: the AI Hub model
+# (azurerm_ai_foundry) is a different service with a different resource tree, requires a storage
+# account and key vault, and does not support managedComputeDeployments.
+#
+# Deployed via azapi because the required API versions are preview and are not yet modelled by the
+# azurerm provider. See docs/adr/006-multi-vendor-model-catalog.md.
+#
 # See ADR 005 and Principle V.
 
-resource "azurerm_ai_foundry" "this" {
-  name                = "${local.resource_name}-foundry"
-  resource_group_name = azurerm_resource_group.this.name
-  location            = azurerm_resource_group.this.location
-  storage_account_id  = azurerm_storage_account.foundry.id
-  key_vault_id        = azurerm_key_vault.this.id
+resource "azapi_resource" "foundry" {
+  type      = "Microsoft.CognitiveServices/accounts@2025-06-01"
+  name      = "${local.resource_name}-foundry"
+  parent_id = azurerm_resource_group.this.id
+  location  = azurerm_resource_group.this.location
+  tags      = local.tags
 
-  public_network_access = "Disabled"
+  body = {
+    kind = "AIServices"
+    sku = {
+      name = "S0"
+    }
+    identity = {
+      type = "SystemAssigned"
+    }
 
-  identity {
-    type = "SystemAssigned"
-  }
+    properties = {
+      # Principle II. The reference architecture leaves this Enabled; we do not.
+      # scripts/policy-no-public-endpoints.sh fails the build if this is flipped.
+      publicNetworkAccess = "Disabled"
 
-  dynamic "managed_network" {
-    for_each = var.enable_private_networking ? [1] : []
-    content {
-      isolation_mode = "AllowOnlyApprovedOutbound"
+      # Entra only. No account keys anywhere in this system (Principle VIII).
+      disableLocalAuth = true
+
+      allowProjectManagement = true
+      customSubDomainName    = "${local.resource_name}-foundry"
     }
   }
 
-  tags = local.tags
+  response_export_values = [
+    "identity.principalId",
+    "properties.endpoint",
+  ]
 }
 
-resource "azurerm_ai_foundry_project" "this" {
-  name               = "${local.resource_name}-proj"
-  location           = azurerm_ai_foundry.this.location
-  ai_services_hub_id = azurerm_ai_foundry.this.id
+resource "azapi_resource" "foundry_project" {
+  type      = "Microsoft.CognitiveServices/accounts/projects@2026-05-15-preview"
+  name      = "${local.resource_name}-proj"
+  parent_id = azapi_resource.foundry.id
+  location  = azurerm_resource_group.this.location
 
-  identity {
-    type = "SystemAssigned"
+  # Preview API; azapi has no schema for it yet.
+  schema_validation_enabled = false
+
+  body = {
+    sku = {
+      name = "S0"
+    }
+    identity = {
+      type = "SystemAssigned"
+    }
+    properties = {
+      displayName = "${local.resource_name}-proj"
+      description = "Capital markets governed AI exchange"
+    }
   }
 
-  tags = local.tags
-}
-
-resource "azurerm_storage_account" "foundry" {
-  name                = replace("${local.resource_name}fdy", "-", "")
-  resource_group_name = azurerm_resource_group.this.name
-  location            = azurerm_resource_group.this.location
-
-  account_tier                    = "Standard"
-  account_replication_type        = "LRS"
-  min_tls_version                 = "TLS1_2"
-  allow_nested_items_to_be_public = false
-  public_network_access_enabled   = false
-  shared_access_key_enabled       = false
-
-  tags = local.tags
+  response_export_values = [
+    "identity.principalId",
+    "properties.internalId",
+  ]
 }

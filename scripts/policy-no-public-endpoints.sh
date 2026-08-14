@@ -13,10 +13,15 @@ banned_pattern2='network_acls[[:space:]]*\{[^}]*default_action[[:space:]]*=[[:sp
 banned_pattern3='public_access_enabled[[:space:]]*=[[:space:]]*true'
 banned_pattern4='anonymous_pull_enabled[[:space:]]*=[[:space:]]*true'
 
+# azapi bodies express this as a camelCase string, so the azurerm patterns above miss it entirely.
+# The Foundry account is declared via azapi; without this the chokepoint could be opened silently.
+banned_pattern5='publicNetworkAccess[[:space:]]*=[[:space:]]*"Enabled"'
+banned_pattern6='disableLocalAuth[[:space:]]*=[[:space:]]*false'
+
 for stack in "${STACKS[@]}"; do
   [ -d "$stack" ] || continue
 
-  for pattern in "$banned_pattern" "$banned_pattern3" "$banned_pattern4"; do
+  for pattern in "$banned_pattern" "$banned_pattern3" "$banned_pattern4" "$banned_pattern5" "$banned_pattern6"; do
     if hits=$(grep -rnE "$pattern" "$stack" --include='*.tf' 2>/dev/null); then
       echo "FAIL: public data-plane exposure in ${stack}"
       echo "$hits"
