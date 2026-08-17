@@ -11,6 +11,11 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 4.14"
     }
+    # references.tf reads the Foundry project, which azurerm does not model.
+    azapi = {
+      source  = "Azure/azapi"
+      version = "~> 2"
+    }
     azuread = {
       source  = "hashicorp/azuread"
       version = "~> 3.0"

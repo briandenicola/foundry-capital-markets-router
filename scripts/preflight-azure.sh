@@ -202,5 +202,4 @@ fi
 green "No blocking issues. ${WARNINGS} warning(s)."
 echo
 echo "Next:"
-echo "  ./scripts/bootstrap-remote-state.sh    # once per subscription"
-echo "  terraform -chdir=infrastructure apply"
+echo "  task cloud:up"

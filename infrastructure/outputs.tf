@@ -1,3 +1,8 @@
+output "app_name" {
+  description = "Base resource name. Every platform resource name derives from this, and the\napps stack takes it as its only required input."
+  value       = local.resource_name
+}
+
 output "resource_group_name" {
   description = "Platform resource group."
   value       = azurerm_resource_group.this.name

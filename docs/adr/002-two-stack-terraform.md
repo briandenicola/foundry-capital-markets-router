@@ -14,8 +14,17 @@ A single stack means every service redeploy produces a plan that includes the ne
 
 ## Decision
 
-Maintain two stacks: `infrastructure/` for the platform and `apps/` for the workloads. The `apps/`
-stack consumes platform values through remote state data sources in `references.tf`.
+Maintain two stacks: `infrastructure/` for the platform and `apps/` for the workloads.
+
+Both stacks use `backend "local" {}`. There is no remote state. A storage account holding state
+is one more resource to provision, one more name to configure, and a prompt at `init`, and it
+buys nothing when a single operator stands the estate up and tears it down.
+
+The `apps/` stack does not read the platform stack's state. It takes one input, `app_name`, and
+derives every platform resource name from it using the same convention `infrastructure/locals.tf`
+applies, then finds those resources with `data` lookups in `references.tf`. The two stacks meet in
+the orchestration layer -- `terraform -chdir=./infrastructure output -raw app_name`, wired in
+`tasks/Taskfile.app.yml` -- not inside Terraform.
 
 ## Consequences
 
@@ -28,15 +37,16 @@ stack consumes platform values through remote state data sources in `references.
 
 ### What this costs us
 
-- Two states to bootstrap, initialise, and keep aligned.
-- A cross-stack contract: renaming a platform output breaks the workload stack, and the failure
-  surfaces at apply time rather than at edit time.
+- Two states to keep aligned, and both are local, so they live on whichever machine ran the apply.
+- A cross-stack contract: the naming convention is now the contract. Changing how
+  `infrastructure/locals.tf` composes a resource name breaks the workload stack, and the failure
+  surfaces at plan time as a "resource not found" rather than at edit time.
 - Ordering becomes a rule people must know. Platform applies before workloads, always.
 
 ### What we will have to revisit
 
-If the cross-stack output contract starts churning, consider a shared module or a data-source
-lookup by resource name and tag rather than by remote state.
+If more than one person needs to apply against the same estate, local state becomes the
+constraint and remote state has to come back. That is a team-size trigger, not a technical one.
 
 ## Alternatives considered
 

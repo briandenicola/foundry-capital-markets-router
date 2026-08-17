@@ -29,17 +29,16 @@ tasks:
       REGION: '{{.REGION | default "eastus2"}}'
 
   guard:
-    desc: Refuse to proceed if Terraform state is local or the stacks are misaligned
+    desc: Refuse to proceed if any deployment artefact violates the no-public-endpoint policy
     cmds:
-      - ./scripts/guard-local-terraform-state.sh
       - ./scripts/policy-no-public-endpoints.sh
       - ./scripts/policy-no-development-environment.sh
 
   init:
-    desc: Initialise both Terraform stacks against remote state
+    desc: Initialise the platform stack. Local state, so there is nothing to configure.
     cmds:
-      - terraform -chdir=./{{.INFRA_DIR}} init -upgrade
-      - terraform -chdir=./{{.APPS_DIR}} init -upgrade
+      - terraform -chdir=./{{.INFRA_DIR}} init -reconfigure -input=false
+      - terraform -chdir=./{{.INFRA_DIR}} validate
 
   plan:
     desc: Plan the platform stack
