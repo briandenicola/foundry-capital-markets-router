@@ -8,13 +8,13 @@ Last updated 2026-08-14.
 
 ## Phase 0 — Foundation (day 1 to 2)
 
-- **T-001** Repo scaffold via scripts/bootstrap-repo.mjs; Taskfile tree; Directory.Packages.props;
+- [x] **T-001** Repo scaffold via scripts/bootstrap-repo.mjs; Taskfile tree; Directory.Packages.props;
   global.json pinning the .NET SDK.
-- **T-002** Spec-kit assets under .specify, .github/agents, .github/prompts, and
+- [x] **T-002** Spec-kit assets under .specify, .github/agents, .github/prompts, and
   copilot-instructions.md.
-- **T-003** CI quality gate: lint, typecheck, coverage threshold, CodeQL, gitleaks, Checkov,
+- [x] **T-003** CI quality gate: lint, typecheck, coverage threshold, CodeQL, gitleaks, Checkov,
   no-public-endpoint policy job. The gate must be green before any feature code merges.
-- **T-004** Terraform remote state bootstrap and the local-state guard script.
+- [x] **T-004** Terraform remote state bootstrap and the local-state guard script.
 
 ## Phase 1 — Private platform (day 2 to 4) — riskiest, front-loaded
 
@@ -63,7 +63,7 @@ Last updated 2026-08-14.
 
 ## Phase 3 — Approval gate (day 7 to 9)
 
-- **T-017** Approval domain model, state machine, and evidence-packet hashing.
+- [x] **T-017** Approval domain model, state machine, and evidence-packet hashing.
 - **T-018** Approval API per contract, segregation-of-duties enforcement, and the expiry job.
   **Carries a CI expiry:** the `contract-conformance` job in `.github/workflows/quality-gate.yml`
   is non-required *only* until this task lands. `Fcmr.Contract.Tests` currently fails 13 approval
