@@ -657,8 +657,8 @@ APPROVAL_EXPIRY_MINUTES=30
   </PropertyGroup>
 
   <ItemGroup Label="Azure">
-    <PackageVersion Include="Azure.Identity" Version="1.17.2" />
-    <PackageVersion Include="Azure.Monitor.OpenTelemetry.AspNetCore" Version="1.3.0" />
+    <PackageVersion Include="Azure.Identity" Version="1.21.0" />
+    <PackageVersion Include="Azure.Monitor.OpenTelemetry.AspNetCore" Version="1.6.0" />
     <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.46.1" />
     <PackageVersion Include="Azure.Search.Documents" Version="11.6.0" />
     <PackageVersion Include="Azure.Security.KeyVault.Secrets" Version="4.7.0" />
@@ -691,15 +691,20 @@ APPROVAL_EXPIRY_MINUTES=30
   </ItemGroup>
 
   <ItemGroup Label="Testing">
-    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
-    <!-- Pinned to the installed ASP.NET Core 10.0.0 runtime so the in-process contract host
-         matches what the service runs on. -->
-    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.0" />
-    <PackageVersion Include="xunit" Version="2.9.2" />
-    <PackageVersion Include="xunit.runner.visualstudio" Version="2.8.2" />
-    <PackageVersion Include="FluentAssertions" Version="7.0.0" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
+    <!-- Tracks the ASP.NET Core 10.0 patch line. The in-process contract host rolls forward
+         onto the installed 10.0.x runtime, so this need only stay on the same major.minor as
+         the service; it must not cross to 11.x ahead of the runtime. -->
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.11" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
+    <!-- FluentAssertions is deliberately held on the 7.x line. 8.0 relicensed: free for
+         open-source and non-commercial use, paid for commercial use. This repository is
+         commercial work, and a test-only convenience is not worth a licence obligation in a
+         demo whose subject is governance. 7.2.2 is the last Apache-2.0 release. -->
+    <PackageVersion Include="FluentAssertions" Version="7.2.2" />
     <PackageVersion Include="NSubstitute" Version="5.3.0" />
-    <PackageVersion Include="coverlet.collector" Version="6.0.2" />
+    <PackageVersion Include="coverlet.collector" Version="10.0.1" />
   </ItemGroup>
 
 </Project>
@@ -1044,6 +1049,10 @@ updates:
       # Preview AI SDKs are exact-pinned deliberately and upgraded by hand.
       - dependency-name: "Azure.AI.Projects"
       - dependency-name: "Azure.AI.Agents.Persistent"
+      # FluentAssertions 8.0 relicensed: free for open-source and non-commercial use, paid for
+      # commercial use. This is commercial work. 7.x is the last Apache-2.0 line. See ADR-010.
+      - dependency-name: "FluentAssertions"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: npm
     directory: "/src/webui"
@@ -1055,6 +1064,12 @@ updates:
         patterns: ["react", "react-dom", "@types/react*"]
       build-tooling:
         patterns: ["vite", "@vitejs/*", "typescript", "eslint*"]
+    ignore:
+      # TypeScript 7 is npm's `latest`, but typescript-eslint still declares
+      # `peer typescript <6.1.0`, so adopting it fails `npm install` outright. Revisit when
+      # typescript-eslint supports 7. See ADR-010.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: npm
     directory: "/tests/e2e"
@@ -1067,6 +1082,11 @@ updates:
       - "/apps"
     schedule:
       interval: weekly
+    ignore:
+      # azurerm is held on 4.x through the demo. 5.0 is a breaking change and the estate is
+      # applied against 4.x. See ADR-010.
+      - dependency-name: "hashicorp/azurerm"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: "/"
@@ -1199,7 +1219,7 @@ jobs:
     name: secret scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: gitleaks
@@ -1211,7 +1231,7 @@ jobs:
     name: no public endpoint policy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Enforce private-by-construction
         run: ./scripts/policy-no-public-endpoints.sh
 
@@ -1219,7 +1239,7 @@ jobs:
     name: no development environment in deployment
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # router-service disables Router.Invoke enforcement when the host reports the Development
       # environment. That affordance was justified by analogy to enable_private_networking, and
       # the analogy only holds if it is enforced the way that variable is enforced -- by a job
@@ -1234,8 +1254,8 @@ jobs:
     name: terraform lint and scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.7.5
       - name: fmt
@@ -1256,8 +1276,8 @@ jobs:
     name: dotnet build test coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
       - name: restore
@@ -1296,8 +1316,8 @@ jobs:
     # blocks is a skip with more YAML.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
       - name: restore
@@ -1314,8 +1334,8 @@ jobs:
       run:
         working-directory: src/webui
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - run: npm ci
@@ -1327,8 +1347,8 @@ jobs:
     name: generated api types in sync
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       # The UI's types are generated from the C# decision library. If a contract type changes and
@@ -1339,7 +1359,7 @@ jobs:
     name: no simulated agent reasoning
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # ADR-007. The demo's one irreplaceable claim is live agent reasoning; a replayed transcript
       # rendered in the product UI falsifies it, and a label does not repair that. Enforced here
       # rather than asserted in a doc, for the same reason the public-endpoint rule is.
@@ -1349,8 +1369,8 @@ jobs:
     name: architecture diagrams in sync
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       # The .excalidraw files are build output, not drawings. Regenerating them here is what stops
@@ -1363,8 +1383,8 @@ jobs:
     name: preview sdk pin guard
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: arduino/setup-task@v2
+      - uses: actions/checkout@v7
+      - uses: arduino/setup-task@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - run: task lint:preview-sdk-pins
@@ -1392,10 +1412,10 @@ jobs:
       matrix:
         language: [csharp, javascript-typescript]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - if: matrix.language == 'csharp'
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
 
@@ -3452,6 +3472,7 @@ reasonable at the time.
 | 007 | No fallback may simulate agent reasoning | Accepted |
 | 008 | The approval aggregate authorises; it does not execute | Accepted |
 | 009 | Route responses state whether a model ran; dataClassification is required | Accepted |
+| 010 | Three dependencies held below their latest major | Accepted |
 
 ===== FILE: docs/adr/0000-adr-template.md =====
 # NNN. [Title as a decision, not a topic]
@@ -4909,6 +4930,11 @@ terraform {
   required_version = ">= 1.7.0"
 
   required_providers {
+    # Held on 4.x deliberately, not incidentally. azurerm 5.0 is a breaking change -- it
+    # replaced resource_group_name + private_dns_zone_name on
+    # azurerm_private_dns_zone_virtual_network_link with private_dns_zone_id. The estate is
+    # applied and demonstrated on 4.x; the provider major has no bearing on what the demo
+    # shows, so the upgrade buys nothing and risks the one apply that matters. See ADR-010.
     azurerm = {
       source  = "hashicorp/azurerm"
       version = "~> 4.14"
@@ -5625,6 +5651,11 @@ terraform {
   required_version = ">= 1.7.0"
 
   required_providers {
+    # Held on 4.x deliberately, not incidentally. azurerm 5.0 is a breaking change -- it
+    # replaced resource_group_name + private_dns_zone_name on
+    # azurerm_private_dns_zone_virtual_network_link with private_dns_zone_id. The estate is
+    # applied and demonstrated on 4.x; the provider major has no bearing on what the demo
+    # shows, so the upgrade buys nothing and risks the one apply that matters. See ADR-010.
     azurerm = {
       source  = "hashicorp/azurerm"
       version = "~> 4.14"
@@ -6988,28 +7019,29 @@ already on screen.
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@azure/msal-browser": "^3.28.1",
-    "@azure/msal-react": "^2.2.0",
+    "@azure/msal-browser": "^5.18.0",
+    "@azure/msal-react": "^5.5.5",
     "@tanstack/react-query": "^5.62.11",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "react-router-dom": "^6.28.1"
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.2"
   },
   "devDependencies": {
-    "@testing-library/jest-dom": "^6.6.3",
+    "@eslint/js": "^10.0.1",
+    "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.1.0",
-    "@types/react": "^18.3.18",
-    "@types/react-dom": "^18.3.5",
-    "@vitejs/plugin-react": "^4.3.4",
-    "eslint": "^9.17.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
+    "eslint": "^10.8.1",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.4",
     "globals": "^17.11.0",
-    "jsdom": "^25.0.1",
-    "typescript": "^5.7.2",
+    "jsdom": "^30.0.1",
+    "typescript": "^6.0.3",
     "typescript-eslint": "^8.67.0",
-    "vite": "^6.0.5",
-    "vitest": "^2.1.8"
+    "vite": "^8.2.1",
+    "vitest": "^4.1.10"
   }
 }
 
@@ -9612,7 +9644,7 @@ export default defineConfig({
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": false,
-    "types": ["vitest/globals", "@testing-library/jest-dom"]
+    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom"]
   },
   "include": ["src"]
 }
@@ -13936,5 +13968,70 @@ output "model_deployments" {
   description = "Serverless model deployments, by catalog key. The router resolves tiers to these names."
   value       = { for k, v in azapi_resource.model_deployment : k => v.name }
 }
+
+===== FILE: docs/adr/010-dependencies-held-below-latest-major.md =====
+# ADR-010: Three dependencies are held below their latest major
+
+- Status: Accepted
+- Date: 2026-08-17
+- Deciders: @briandenicola
+
+## Context
+
+Twenty Dependabot pull requests were reviewed and merged in one pass. Seventeen were taken as
+proposed. Three were not, for three unrelated reasons, and all three will be re-proposed weekly
+unless the reasons are written down.
+
+Nothing here is a general position on staying current. Everything else was upgraded, including
+several majors — React 19.2, Vite 8, Vitest 4, jsdom 30, msal-browser 5, msal-react 5,
+react-router 7, ESLint 10, and TypeScript 6.
+
+## Decision
+
+### FluentAssertions stays on 7.x
+
+FluentAssertions 8.0 relicensed. From its own nuspec:
+
+> This version is free for open-source projects and non-commercial use, but commercial use
+> requires a paid license.
+
+7.2.2 is the last Apache-2.0 release. This repository is commercial work, and a test-assertion
+convenience is not worth a licence obligation — least of all in a demo whose subject is
+governance, shown to an audience whose job is noticing exactly this.
+
+### TypeScript stays on 6.x
+
+TypeScript 7 is npm's `latest`. The newest `typescript-eslint` (8.67.0) still declares
+`peer typescript >=4.8.4 <6.1.0`, so adopting 7 fails `npm install` outright — the lint toolchain
+cannot load. This is a compatibility fact, not a preference, and it reverses the moment
+typescript-eslint ships support.
+
+Moving to 6 was not free: it introduced `TS2882` on the side-effect CSS import in `main.tsx`,
+fixed by adding `vite/client` to the `types` array in `tsconfig.json`, which the explicit array
+had been shadowing.
+
+### azurerm stays on 4.x through the demo
+
+azurerm 5.0 is a breaking change. `azurerm_private_dns_zone_virtual_network_link` replaced
+`resource_group_name` + `private_dns_zone_name` with `private_dns_zone_id`, which fails
+`terraform validate` on `infrastructure/network.tf`.
+
+That break was found, fixed, and both stacks validated clean on 5.1.0 — so the objection is not
+that it cannot be done. The objection is that `terraform validate` only proves the schema.
+Changed defaults and behavioural differences in a major provider bump surface at `apply`, and the
+first apply of this estate is the one that matters. The provider major has no bearing on what the
+demo shows, so the upgrade carries risk against no benefit until the estate is standing.
+
+## Consequences
+
+- Three `ignore` rules in `.github/dependabot.yml`, each carrying its reason, so the weekly noise
+  stops and the reason travels with the rule.
+- Both `providers.tf` files state the azurerm hold at the pin, because that is where someone
+  will be standing when they wonder why.
+- The azurerm hold is the only one with an expiry: revisit once the estate has been applied and
+  the demo has been delivered. The other two expire on external events — a licence change, and
+  typescript-eslint supporting TypeScript 7.
+- PRs #1, #3 (azurerm) closed unmerged. The `private_dns_zone_id` fix was **not** kept, because
+  it is invalid on 4.x; it is recorded here instead and is a two-line change when wanted.
 
 __SCAFFOLD_PAYLOAD_END__*/

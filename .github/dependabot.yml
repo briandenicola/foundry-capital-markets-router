@@ -15,6 +15,10 @@ updates:
       # Preview AI SDKs are exact-pinned deliberately and upgraded by hand.
       - dependency-name: "Azure.AI.Projects"
       - dependency-name: "Azure.AI.Agents.Persistent"
+      # FluentAssertions 8.0 relicensed: free for open-source and non-commercial use, paid for
+      # commercial use. This is commercial work. 7.x is the last Apache-2.0 line. See ADR-010.
+      - dependency-name: "FluentAssertions"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: npm
     directory: "/src/webui"
@@ -26,6 +30,12 @@ updates:
         patterns: ["react", "react-dom", "@types/react*"]
       build-tooling:
         patterns: ["vite", "@vitejs/*", "typescript", "eslint*"]
+    ignore:
+      # TypeScript 7 is npm's `latest`, but typescript-eslint still declares
+      # `peer typescript <6.1.0`, so adopting it fails `npm install` outright. Revisit when
+      # typescript-eslint supports 7. See ADR-010.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: npm
     directory: "/tests/e2e"
@@ -38,6 +48,11 @@ updates:
       - "/apps"
     schedule:
       interval: weekly
+    ignore:
+      # azurerm is held on 4.x through the demo. 5.0 is a breaking change and the estate is
+      # applied against 4.x. See ADR-010.
+      - dependency-name: "hashicorp/azurerm"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: "/"

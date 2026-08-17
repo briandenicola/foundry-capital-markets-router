@@ -28,3 +28,4 @@ reasonable at the time.
 | 007 | No fallback may simulate agent reasoning | Accepted |
 | 008 | The approval aggregate authorises; it does not execute | Accepted |
 | 009 | Route responses state whether a model ran; dataClassification is required | Accepted |
+| 010 | Three dependencies held below their latest major | Accepted |
