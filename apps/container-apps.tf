@@ -2,7 +2,7 @@ resource "azurerm_container_app" "service" {
   for_each = local.services
 
   name                         = each.key
-  resource_group_name          = local.platform.resource_group_name
+  resource_group_name          = azurerm_resource_group.this.name
   container_app_environment_id = local.platform.container_app_environment_id
   revision_mode                = "Single"
   tags                         = local.tags

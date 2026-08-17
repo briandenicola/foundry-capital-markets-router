@@ -5,7 +5,7 @@ resource "azurerm_user_assigned_identity" "service" {
   for_each = local.services
 
   name                = "id-${each.key}"
-  resource_group_name = local.platform.resource_group_name
-  location            = local.platform.location
+  resource_group_name = azurerm_resource_group.this.name
+  location            = azurerm_resource_group.this.location
   tags                = local.tags
 }

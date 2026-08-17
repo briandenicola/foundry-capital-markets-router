@@ -52,5 +52,5 @@ tasks:
     desc: Tail logs for a container app. Usage - task app:logs -- router-service
     cmds:
       - az containerapp logs show --name {{.CLI_ARGS}}
-        --resource-group $(terraform -chdir=./infrastructure output -raw resource_group_name)
+        --resource-group $(terraform -chdir=./apps output -raw resource_group_name)
         --follow

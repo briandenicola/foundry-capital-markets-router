@@ -8,6 +8,7 @@
 
 locals {
   resource_group_name = "rg-${var.app_name}"
+  apps_rg_name        = "rg-${var.app_name}-apps"
   acr_name            = replace("${var.app_name}acr", "-", "")
   cae_name            = "${var.app_name}-cae"
   cosmos_name         = "${var.app_name}-cosmos"
@@ -31,10 +32,6 @@ locals {
     ManagedBy   = "terraform"
     DataClass   = "synthetic-only"
   }
-}
-
-data "azurerm_resource_group" "this" {
-  name = local.resource_group_name
 }
 
 data "azurerm_container_registry" "this" {
@@ -77,8 +74,6 @@ data "azapi_resource" "foundry_project" {
 # came from remote state.
 locals {
   platform = {
-    resource_group_name                    = data.azurerm_resource_group.this.name
-    location                               = data.azurerm_resource_group.this.location
     acr_name                               = data.azurerm_container_registry.this.name
     acr_login_server                       = data.azurerm_container_registry.this.login_server
     container_app_environment_id           = data.azurerm_container_app_environment.this.id
