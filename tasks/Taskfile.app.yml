@@ -1,47 +1,68 @@
 version: '3'
 
-env:
-  APPS_DIR: apps
-
 vars:
-  ACR_LOGIN_SERVER:
-    sh: terraform -chdir=./infrastructure output -raw acr_login_server 2>/dev/null || true
-  TAG: '{{default "latest" .CLI_ARGS}}'
-  SERVICES: router-service research-service surveillance-service orderrouting-service
+  APPS_DIR: apps
+  # Images are tagged with the commit they were built from. "latest" is not a version, and on
+  # demo day the question "which build is running?" needs an answer.
+  COMMIT_VERSION:
+    sh: git rev-parse HEAD | cut -c 1-8
+  # Services with a Dockerfile today. The three lane services are stubs until T-023, T-024,
+  # and T-025; listing them here before they build would only move the failure further from
+  # its cause.
+  BUILDABLE: router-service
 
 tasks:
   default:
     desc: Show available app tasks
     cmds:
-      - task --list
+      - task --list --taskfile ./tasks/Taskfile.app.yml
+
+  init:
+    desc: Initialise the workload stack. Local state, so there is nothing to configure.
+    cmds:
+      - terraform -chdir=./{{.APPS_DIR}} init -reconfigure -input=false
+      - terraform -chdir=./{{.APPS_DIR}} validate
 
   build:
-    desc: Build all service container images
+    desc: Build and push all service images to the private registry
     cmds:
-      - for: { var: SERVICES }
-        cmd: docker build -t {{.ACR_LOGIN_SERVER}}/{{.ITEM}}:{{.TAG}} -f src/{{.ITEM}}/Dockerfile .
+      - for: { var: BUILDABLE }
+        task: build-service
+        vars:
+          SERVICE: '{{.ITEM}}'
 
-  build-ui:
-    desc: Build the scoreboard UI image
+  build-service:
+    desc: Build one service image in ACR. Usage - task app:build-service SERVICE=router-service
+    requires:
+      vars: [SERVICE]
     cmds:
-      - docker build -t {{.ACR_LOGIN_SERVER}}/webui:{{.TAG}} -f src/webui/Dockerfile src/webui
+      # az acr build runs the build inside the registry. Nothing is built or pushed from this
+      # machine, so no Docker daemon is required and no image crosses the public internet.
+      - az acr build
+        --registry {{.ACR_NAME}}
+        --image {{.SERVICE}}:{{.COMMIT_VERSION}}
+        --image {{.SERVICE}}:latest
+        --file src/{{.SERVICE}}/Dockerfile .
+    vars:
+      ACR_NAME:
+        sh: terraform -chdir=./infrastructure output -raw acr_name
 
-  push:
-    desc: Push images to the private container registry
+  apply:
+    desc: Apply the workload stack against the images built from the current commit
     cmds:
-      - az acr login --name $(terraform -chdir=./infrastructure output -raw acr_name)
-      - for: { var: SERVICES }
-        cmd: docker push {{.ACR_LOGIN_SERVER}}/{{.ITEM}}:{{.TAG}}
-      - docker push {{.ACR_LOGIN_SERVER}}/webui:{{.TAG}}
+      - terraform -chdir=./{{.APPS_DIR}} apply -auto-approve -compact-warnings
+        -var "app_name={{.APP_NAME}}"
+        -var "image_tag={{.COMMIT_VERSION}}"
+    vars:
+      APP_NAME:
+        sh: terraform -chdir=./infrastructure output -raw app_name
 
   deploy:
-    desc: Build, push, and apply the workload stack
+    desc: Build images, then apply. Images exist before anything references them.
     cmds:
+      - task: init
       - task: build
-      - task: build-ui
-      - task: push
-      - terraform -chdir=./{{.APPS_DIR}} apply -auto-approve -compact-warnings
-        -var "image_tag={{.TAG}}"
+      - task: apply
 
   seed:
     desc: Generate and load synthetic demo data (research corpus, e-comms, orders, alerts)
@@ -52,5 +73,15 @@ tasks:
     desc: Tail logs for a container app. Usage - task app:logs -- router-service
     cmds:
       - az containerapp logs show --name {{.CLI_ARGS}}
-        --resource-group $(terraform -chdir=./apps output -raw resource_group_name)
+        --resource-group $(terraform -chdir=./{{.APPS_DIR}} output -raw resource_group_name)
         --follow
+
+  destroy:
+    desc: Destroy the workload stack, leaving the platform intact
+    cmds:
+      - terraform -chdir=./{{.APPS_DIR}} destroy -auto-approve -compact-warnings
+        -var "app_name={{.APP_NAME}}"
+        -var "image_tag={{.COMMIT_VERSION}}"
+    vars:
+      APP_NAME:
+        sh: terraform -chdir=./infrastructure output -raw app_name
