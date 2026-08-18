@@ -9,7 +9,7 @@ Sources read: `specs/001-router-core/contracts/router-api.md`,
 `specs/002-governed-exchange/contracts/router-api-policy-extension.md`,
 `specs/001-router-core/data-model.md`.
 
-## Gap 1 — the approval contract has no way to create a proposal (blocking)
+## Gap 1 — the approval contract has no way to create a proposal — CLOSED
 
 `approval-api.md` publishes `GET /v1/approvals`, `GET /v1/approvals/{id}`, and
 `POST /v1/approvals/{id}/decision`. Nothing creates the proposal those three operate on.
@@ -23,7 +23,11 @@ Needed from T-018: either the lane-service endpoint that enqueues a proposal is 
 of this contract, or an explicit, auth-gated seeding operation is. Owner: Livingston, with Saul on
 whether a seeding operation is constitutionally acceptable in a demo build.
 
-## Gap 2 — the approval contract never says how the caller becomes `decidedByObjectId` (blocking)
+**Closed by ADR-011.** `POST /v1/approvals` is published, gated on the `Proposer` app role. The
+seeding option was rejected: to be useful it would have to set the proposer identity from its
+input, which is the Gap 2 hole wearing a different name.
+
+## Gap 2 — the approval contract never says how the caller becomes `decidedByObjectId` — CLOSED
 
 The segregation-of-duties rule is stated as `decidedByObjectId equals proposedByObjectId → 409`,
 but nothing says how the caller's Entra object id reaches that field. Until it does, the single
@@ -32,6 +36,11 @@ cannot present two distinguishable identities.
 
 `ApprovalContractTests` sends `X-Fcmr-Caller-Object-Id` as a placeholder and says so at the call
 site. That header is not a proposal; it is a marker for the decision that has not been made.
+
+**Closed by ADR-011.** Identity comes from the validated token's `oid` claim and is never accepted
+from a request. The header was worse than incomplete: a caller supplying the value that
+segregation of duties compares can present one id when proposing and another when approving, and
+the control returns 200. The suite now issues two principals with different `oid` values.
 
 ## Gap 3 — no way to say "routed, decision recorded, model not yet invoked" — CLOSED
 
@@ -74,7 +83,7 @@ nothing is available — so `Route_StatusIsDeterminedByOutcome` accepts either f
 neither for anything else. This is the one place where outcome does not determine status alone, and
 it is worth knowing before someone writes a client that assumes it does.
 
-## Gap 6 — `approval-api.md` gives no error body shape
+## Gap 6 — `approval-api.md` gives no error body shape — CLOSED
 
 The status table names conditions (`SegregationOfDuties`, `InvalidTransition`, `Expired`) without
 saying where they appear on the wire. The tests assume the router's shape — a top-level `error`
