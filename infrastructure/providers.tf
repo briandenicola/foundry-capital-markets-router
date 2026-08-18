@@ -27,7 +27,9 @@ terraform {
 provider "azurerm" {
   features {
     key_vault {
-      purge_soft_delete_on_destroy    = true
+      # False, because purge protection is enabled on the vault and Azure will refuse the purge.
+      # Leaving this true would make every teardown end in an error that means nothing is wrong.
+      purge_soft_delete_on_destroy    = false
       recover_soft_deleted_key_vaults = true
     }
     resource_group {

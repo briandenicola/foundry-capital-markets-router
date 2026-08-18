@@ -34,6 +34,16 @@ jobs:
       - name: Enforce private-by-construction
         run: ./scripts/policy-no-public-endpoints.sh
 
+  least-privilege-scope:
+    name: least privilege role scope policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The quickest fix for a 403 is to widen the scope one level, and nothing in a plan or an
+      # apply looks different afterwards. Checked here so that widening a grant costs a review.
+      - name: Enforce resource-scoped role assignments
+        run: ./scripts/policy-least-privilege-scope.sh
+
   no-development-environment:
     name: no development environment in deployment
     runs-on: ubuntu-latest

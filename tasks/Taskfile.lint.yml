@@ -7,6 +7,8 @@ tasks:
       - task: format
       - task: terraform
       - task: policy
+      - task: least-privilege-scope
+      - task: cosmos-containers
       - task: no-development-environment
       - task: no-simulated-reasoning
       - task: preview-sdk-pins
@@ -30,6 +32,16 @@ tasks:
     desc: Fail if any Terraform resource exposes a public data-plane endpoint
     cmds:
       - ./scripts/policy-no-public-endpoints.sh
+
+  least-privilege-scope:
+    desc: Fail if any role assignment is scoped above a single resource
+    cmds:
+      - ./scripts/policy-least-privilege-scope.sh
+
+  cosmos-containers:
+    desc: Fail if the emulator provisioner and Terraform disagree about the Cosmos containers
+    cmds:
+      - ./scripts/policy-cosmos-containers-match.sh
 
   no-development-environment:
     desc: Fail if any deployment artefact runs router-service in the Development environment

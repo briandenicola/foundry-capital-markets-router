@@ -33,6 +33,7 @@ tasks:
     cmds:
       - ./scripts/policy-no-public-endpoints.sh
       - ./scripts/policy-no-development-environment.sh
+      - ./scripts/policy-least-privilege-scope.sh
 
   init:
     desc: Initialise the platform stack. Local state, so there is nothing to configure.

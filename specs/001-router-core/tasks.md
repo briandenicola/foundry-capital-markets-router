@@ -182,7 +182,27 @@ Task numbers T-042 and T-043 belong to Phase 5 above; Phase 6 keeps its original
 existing references elsewhere in the repository stay valid.
 
 - **T-035** Playwright end-to-end coverage of AC-2, AC-3, and AC-5.
-- **T-036** Terraform policy tests; Checkov clean; verify zero subscription-scoped roles.
+- [x] **T-036** Terraform policy tests; Checkov clean; verify zero subscription-scoped roles.
+  Checkov is at zero failures across both stacks: 20 passed, 7 skipped, each skip carrying its
+  reason inline next to the resource it applies to rather than in a central list that decays away
+  from the code. Six findings were real and fixed -- Cosmos key-metadata writes off, Key Vault
+  purge protection on, ACR dedicated data endpoints, zone redundancy, and untagged-manifest
+  retention. Of the seven skipped, one (CKV_AZURE_140) is a false positive against the current
+  provider schema, four are disproportionate to a single-region demo over synthetic data, and two
+  are genuine gaps carried forward as T-036a rather than dismissed.
+  Subscription-scoped roles are now checked rather than inspected once, by
+  scripts/policy-least-privilege-scope.sh, wired into CI, task lint, and the cloud:up guard. It
+  fails closed on scope expressions it does not recognise, and refuses to pass if it matches no
+  role assignments at all. Verified to reject resource-group, subscription-data-source, and
+  literal /subscriptions/ scopes, not merely to pass on the current four.
+- **T-036a** Image provenance. ACR content trust could not be enabled: Docker Content Trust was
+  deprecated 2025-03-31 and Azure has refused to enable it on registries that did not already have
+  it since 2026-05-31, so `trust_policy_enabled` would fail at apply. The successor is the Notary
+  Project, and neither scheme signs images as part of `az acr build` -- signing is a separate
+  pipeline step. Quarantine (CKV_AZURE_166) is blocked behind the same gap, because without a
+  scanner to release images it would make every build unpullable. Sign images with notation in
+  task app:build, then enable quarantine so unsigned images cannot be deployed. Until this lands,
+  the demo cannot claim image provenance, only image privacy.
 - **T-037** Coverage to at least 70% on router decision logic; close the gaps.
 - **T-038** docs/architecture.md, docs/threat-model.md, and ADRs 001 onward.
 - **T-039** Timed unattended task cloud:up from zero. Must land under 45 minutes.
