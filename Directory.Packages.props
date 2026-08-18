@@ -9,6 +9,17 @@
     <PackageVersion Include="Azure.Identity" Version="1.21.0" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.AspNetCore" Version="1.6.0" />
     <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.46.1" />
+    <!--
+      Required by the Cosmos SDK at run time, not merely at build time. The SDK's build check that
+      demands this reference can be switched off, and doing so produces a perfectly clean build
+      that dies on the first CosmosClient construction with a FileNotFoundException for
+      Newtonsoft.Json. That is how this reference came to be here.
+
+      The documents themselves are still serialised by System.Text.Json, via
+      UseSystemTextJsonSerializerWithOptions in CosmosClientFactory. Newtonsoft is the SDK's own
+      internal dependency and nothing in this repository serialises through it.
+    -->
+    <PackageVersion Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageVersion Include="Azure.Search.Documents" Version="11.6.0" />
     <PackageVersion Include="Azure.Security.KeyVault.Secrets" Version="4.7.0" />
   </ItemGroup>

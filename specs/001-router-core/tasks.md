@@ -49,11 +49,20 @@ Last updated 2026-08-14.
   candidate list marked every same-tier model as selected, which would have mis-attributed
   scoreboard cost the moment Feature 002 put four vendors in one tier; and within-tier selection
   took the first match rather than the cheapest.)*
-- **T-014** Decision persistence to Cosmos plus telemetry. *(Port is defined and in use:
-  `IRoutingDecisionStore`, currently backed by `InMemoryRoutingDecisionStore`. The Cosmos adapter
-  is a registration change.)* **Validate the Application Insights
-  latency and sampling assumption here against the AC-5 five-second budget, and build the Cosmos
-  change-feed fallback behind configuration regardless.**
+- [x] **T-014** Decision persistence to Cosmos. `CosmosRoutingDecisionStore` landed as a
+  registration change, exactly as the port promised. Verified against the Cosmos DB Linux emulator
+  in Docker (`task cosmos:up`, then `task cosmos:test`) — 13 tests covering round-trip
+  serialisation, camelCase and enum-name storage, decimal precision, partition-key isolation,
+  create-versus-upsert, the scoreboard window and ordering, and the readiness probe. Two deployment
+  defects were found and fixed on the way: `COSMOS_ENDPOINT`/`COSMOS_DATABASE` bound to nothing
+  (ASP.NET needs `Cosmos__AccountEndpoint`), and no Cosmos data-plane role assignments existed at
+  all, so every read and write would have been a 403.
+- **T-014a** The parts of T-014 that need a live subscription, split out rather than ticked off:
+  managed-identity authentication, private-endpoint reachability and the container-scoped data-plane
+  roles are all unverified, because the emulator implements none of them. Also here: running the
+  persistence suite in CI against an emulator service container, and validating the Application
+  Insights latency and sampling assumption against the AC-5 five-second budget. **The Cosmos
+  change-feed fallback is still to be built behind configuration regardless.**
 - [x] **T-015** POST /v1/route implemented against contracts/router-api.md, with contract tests.
   *(Done — HTTP-to-`RoutingPlanner.Plan()` translation only. The previous stub called
   `TierSelector` directly and so bypassed `PolicyGate`; that is fixed. Two contract gaps closed in

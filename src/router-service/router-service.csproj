@@ -12,6 +12,7 @@
     <PackageReference Include="Microsoft.Identity.Web" />
     <PackageReference Include="Azure.AI.Projects" />
     <PackageReference Include="Microsoft.Azure.Cosmos" />
+    <PackageReference Include="Newtonsoft.Json" />
   </ItemGroup>
 
   <ItemGroup>
