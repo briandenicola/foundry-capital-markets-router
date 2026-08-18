@@ -49,6 +49,17 @@ jobs:
       # the portal and CLI paths that never open a pull request. Neither alone is sufficient.
       - run: ./scripts/policy-no-development-environment.sh
 
+  cosmos-containers-match:
+    name: cosmos containers match terraform
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # tools/Fcmr.CosmosProvision duplicates the container list from infrastructure/cosmos.tf,
+      # because Terraform cannot reach the local emulator. Duplicated truth drifts, and the drift
+      # would not show up locally -- the persistence suite would pass against a database shape that
+      # does not exist in Azure, and the failure would first appear on the deployed environment.
+      - run: ./scripts/policy-cosmos-containers-match.sh
+
   terraform:
     name: terraform lint and scan
     runs-on: ubuntu-latest
@@ -85,17 +96,19 @@ jobs:
         run: dotnet format --verify-no-changes --no-restore
       - name: build
         run: dotnet build --no-restore --configuration Release
-      # The contract suite is excluded here and runs in its own non-required job below. It is red
-      # by design while the surfaces it specifies are still being written, and a red step here
-      # would abort the job before the coverage threshold below ever executes -- leaving the gate
-      # absent rather than loosened, which is worse, because the job name still claims it ran.
+      # Two suites are excluded. The contract suite runs in its own job below, where its result is
+      # reported on its own terms. Fcmr.Persistence.Tests needs the Cosmos emulator container and
+      # is not run in CI at all yet -- it fails loudly rather than skipping when the emulator is
+      # absent, deliberately, because a persistence suite that reports green without connecting to
+      # anything is the failure mode it exists to prevent. Running it here means starting the
+      # emulator service in the workflow, which is tracked on T-014a rather than half-done now.
       #
       # The filter matches tasks/Taskfile.test.yml:unit deliberately. Two spellings of "which
       # tests gate a merge" is how they drift.
       - name: test with coverage
         run: >-
           dotnet test --no-build --configuration Release
-          --filter "FullyQualifiedName!~Fcmr.Contract.Tests"
+          --filter "FullyQualifiedName!~Fcmr.Contract.Tests&FullyQualifiedName!~Fcmr.Persistence.Tests"
           --collect:"XPlat Code Coverage" --results-directory ./TestResults
       - name: enforce coverage threshold
         run: ./scripts/check-coverage.sh 70 Fcmr.Router.Decisions

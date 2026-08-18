@@ -57,3 +57,9 @@ blob-report/
 .squad/sessions/
 # Squad: SubSquad activation file (local to this machine)
 .squad-workstream
+
+# Local developer state that must never be committed. The Cosmos emulator key is generated here by
+# 'task cosmos:up' -- it is the only key this repository ever produces, it differs on every
+# machine, and it is useless against anything real because the deployed account sets
+# local_authentication_enabled = false.
+.local/

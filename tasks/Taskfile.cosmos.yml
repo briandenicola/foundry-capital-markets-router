@@ -1,0 +1,123 @@
+version: '3'
+
+# The Cosmos DB Linux emulator (vNext), for working on persistence with no Azure subscription in
+# reach.
+#
+# The emulator authenticates with a key and supports nothing else, so this is the one place in the
+# repository where a key exists at all. Two things keep that honest:
+#
+#   1. The key is generated on this machine, on first run, into .local/ which is gitignored. It is
+#      never a well-known constant, never committed, and differs between developers -- so there is
+#      no value anyone could copy out of this repository and try against something real.
+#   2. The router refuses the key path outside the Development environment and fails at startup if
+#      asked (see src/router-service/Persistence/CosmosClientFactory.cs). The real account also
+#      sets local_authentication_enabled = false, so a key presented to it is rejected regardless.
+#
+# What this proves: the real Cosmos SDK, the real wire protocol, partition-key routing, the
+# serializer settings, and the queries. What it does not prove: managed identity, private
+# endpoints, or RBAC, none of which the emulator implements. Those stay unverified until the
+# subscription is back, and saying so is cheaper than discovering it on stage.
+
+vars:
+  CONTAINER: fcmr-cosmos-emulator
+  IMAGE: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-latest
+  PORT: 8081
+  PROBE_PORT: 8080
+  KEY_FILE: .local/cosmos-emulator.key
+  DATABASE: fcmr
+
+tasks:
+  default:
+    desc: Show available cosmos tasks
+    cmds:
+      - task --list --taskfile ./tasks/Taskfile.cosmos.yml
+
+  up:
+    desc: Start the local Cosmos DB emulator and create the fcmr containers
+    cmds:
+      - task: keygen
+      - |
+        set -eu
+
+        if [ -n "$(docker ps -q -f name=^/{{.CONTAINER}}$)" ]; then
+          echo "{{.CONTAINER}} is already running."
+        else
+          docker rm -f {{.CONTAINER}} >/dev/null 2>&1 || true
+          echo "Starting the Cosmos DB emulator. The first run pulls the image and takes a few minutes."
+          docker run -d --name {{.CONTAINER}} \
+            -p {{.PORT}}:{{.PORT}} \
+            -p {{.PROBE_PORT}}:{{.PROBE_PORT}} \
+            --mount type=bind,source="$(pwd)/{{.KEY_FILE}}",target=/emulator.key,readonly \
+            {{.IMAGE}} \
+            --protocol https \
+            --key-file /emulator.key >/dev/null
+        fi
+      - task: wait
+      - task: init
+      - task: key
+
+  keygen:
+    desc: Generate the local emulator key if it does not exist
+    # Generated, not committed. A key that lives in source is a key that leaks, and one that is
+    # identical on every machine invites exactly the habit this project exists to argue against.
+    status:
+      - test -s {{.KEY_FILE}}
+    cmds:
+      - mkdir -p .local
+      - openssl rand -base64 64 | tr -d '\n' > {{.KEY_FILE}}
+      - chmod 600 {{.KEY_FILE}}
+      - echo "Generated a local emulator key at {{.KEY_FILE}} (gitignored)."
+
+  wait:
+    desc: Block until the emulator reports ready
+    # The emulator's own readiness probe, not a sleep and not a log grep. The docs say the legacy
+    # "fully ready" log line may be removed; a wait built on it would break silently and look like
+    # a flaky test suite.
+    cmds:
+      - |
+        set -eu
+        printf 'Waiting for the emulator to report ready'
+        for _ in $(seq 1 60); do
+          if curl -fs --max-time 2 http://localhost:{{.PROBE_PORT}}/ready >/dev/null 2>&1; then
+            echo ' ready.'
+            exit 0
+          fi
+          printf '.'
+          sleep 5
+        done
+        echo
+        echo "The emulator did not report ready within five minutes." >&2
+        echo "Logs: task cosmos:logs" >&2
+        exit 1
+
+  init:
+    desc: Create the fcmr database and containers in the emulator
+    cmds:
+      - ./scripts/cosmos-emulator-init.sh {{.PORT}} {{.DATABASE}} {{.KEY_FILE}}
+
+  key:
+    desc: Print the export line for the local emulator key
+    cmds:
+      - |
+        echo
+        echo "The emulator is running. Export its key into your shell:"
+        echo
+        echo "  export COSMOS_EMULATOR_KEY='$(cat {{.KEY_FILE}})'"
+        echo
+        echo "Then:  task cosmos:test"
+        echo
+
+  test:
+    desc: Run the persistence tests against the local emulator
+    cmds:
+      - dotnet test tests/Fcmr.Persistence.Tests
+
+  logs:
+    desc: Tail the emulator logs
+    cmds:
+      - docker logs -f {{.CONTAINER}}
+
+  down:
+    desc: Stop and remove the local Cosmos DB emulator
+    cmds:
+      - docker rm -f {{.CONTAINER}}

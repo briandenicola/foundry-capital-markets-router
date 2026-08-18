@@ -20,6 +20,7 @@ locals {
 
   services = {
     "router-service"       = { external = false, cpu = 1.0, memory = "2Gi" }
+    "approvals-service"    = { external = false, cpu = 0.5, memory = "1Gi" }
     "research-service"     = { external = false, cpu = 0.5, memory = "1Gi" }
     "surveillance-service" = { external = false, cpu = 1.0, memory = "2Gi" }
     "orderrouting-service" = { external = false, cpu = 0.5, memory = "1Gi" }

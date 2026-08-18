@@ -49,13 +49,22 @@ resource "azurerm_container_app" "service" {
         value = local.platform.application_insights_connection_string
       }
 
+      # Double underscore is ASP.NET Core's configuration separator, so these bind to the Cosmos
+      # section the services actually read. The previous COSMOS_ENDPOINT and COSMOS_DATABASE bound
+      # to nothing: the variables were present, looked correct in the portal, and the service would
+      # have started with persistence silently disabled.
       env {
-        name  = "COSMOS_ENDPOINT"
+        name  = "Cosmos__Enabled"
+        value = "true"
+      }
+
+      env {
+        name  = "Cosmos__AccountEndpoint"
         value = local.platform.cosmos_endpoint
       }
 
       env {
-        name  = "COSMOS_DATABASE"
+        name  = "Cosmos__Database"
         value = local.platform.cosmos_database_name
       }
 

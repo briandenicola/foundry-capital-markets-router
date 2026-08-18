@@ -30,9 +30,25 @@ builder.Services.AddRouterAuthorization(builder.Configuration, builder.Environme
 
 builder.Services.AddSingleton<IModelCatalog, ConfiguredModelCatalog>();
 
-// T-014 replaces this registration with the Cosmos adapter. Nothing above the port changes when
-// it does, which is the entire point of the port existing before the adapter.
-builder.Services.AddSingleton<IRoutingDecisionStore, InMemoryRoutingDecisionStore>();
+// T-014. The port has two adapters and the choice is a registration, exactly as designed --
+// nothing above IRoutingDecisionStore knows which one it got.
+//
+// In-memory remains the default, and that is not laziness. A service that reaches for a Cosmos
+// account nobody configured fails in a way that reads like a network fault; requiring the operator
+// to say "yes, persist" makes the absence of persistence an explicit local choice rather than an
+// accident someone discovers after the demo.
+var cosmos = builder.Configuration.GetSection(CosmosOptions.SectionName).Get<CosmosOptions>() ?? new();
+
+if (cosmos.Enabled)
+{
+    builder.Services.AddSingleton(cosmos);
+    builder.Services.AddSingleton(_ => CosmosClientFactory.Create(cosmos, builder.Environment));
+    builder.Services.AddSingleton<IRoutingDecisionStore, CosmosRoutingDecisionStore>();
+}
+else
+{
+    builder.Services.AddSingleton<IRoutingDecisionStore, InMemoryRoutingDecisionStore>();
+}
 
 builder.Services.AddSingleton<IPolicySetRepository>(sp =>
     new InMemoryPolicySetRepository(

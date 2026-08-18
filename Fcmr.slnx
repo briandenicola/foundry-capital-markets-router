@@ -10,7 +10,11 @@
     <Project Path="tests/Fcmr.Approvals.Domain.Tests/Fcmr.Approvals.Domain.Tests.csproj" />
     <Project Path="tests/Fcmr.Contract.Tests/Fcmr.Contract.Tests.csproj" />
     <Project Path="tests/Fcmr.Demo.Data.Tests/Fcmr.Demo.Data.Tests.csproj" />
+    <Project Path="tests/Fcmr.Persistence.Tests/Fcmr.Persistence.Tests.csproj" />
     <Project Path="tests/Fcmr.Router.Decisions.Tests/Fcmr.Router.Decisions.Tests.csproj" />
     <Project Path="tests/Fcmr.RouterService.Tests/Fcmr.RouterService.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/Fcmr.CosmosProvision/Fcmr.CosmosProvision.csproj" />
   </Folder>
 </Solution>

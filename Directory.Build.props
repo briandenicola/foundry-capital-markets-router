@@ -12,6 +12,21 @@
   </PropertyGroup>
 
   <PropertyGroup>
+    <!--
+      The Cosmos SDK's build check insists Newtonsoft.Json be referenced explicitly, because its
+      default serializer is Newtonsoft. This solution does not use that serializer: the client is
+      built with UseSystemTextJsonSerializerWithOptions in CosmosClientFactory, so documents are
+      written by the same System.Text.Json configuration that serialises HTTP responses. Two
+      serializers with different naming and enum conventions would let a record be stored under one
+      shape and published under another, which is the kind of drift an audit trail cannot survive.
+
+      Set repository-wide rather than per project because the check propagates to every consumer of
+      a project that references the SDK, including test projects that never touch Cosmos themselves.
+    -->
+    <AzureCosmosDisableNewtonsoftJsonCheck>true</AzureCosmosDisableNewtonsoftJsonCheck>
+  </PropertyGroup>
+
+  <PropertyGroup>
     <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
     <Deterministic>true</Deterministic>
   </PropertyGroup>
