@@ -27,6 +27,16 @@ public sealed class TestRoleAuthenticationHandler(
 
     public const string RolesHeader = "X-Test-Roles";
 
+    /// <summary>
+    /// Carries the Entra object id this principal presents, as the <c>oid</c> claim.
+    ///
+    /// This is the test double for the token, not for the control. ADR-011 requires the service to
+    /// read identity from the validated principal and never from the request, so a suite that
+    /// wants two distinguishable callers has to produce two principals. Sending the id as a
+    /// request header instead would be testing the hole the ADR closed.
+    /// </summary>
+    public const string ObjectIdHeader = "X-Test-Object-Id";
+
     protected override Task<AuthenticateResult> HandleAuthenticateAsync()
     {
         if (!Request.Headers.TryGetValue(RolesHeader, out var header))
@@ -34,7 +44,16 @@ public sealed class TestRoleAuthenticationHandler(
             return Task.FromResult(AuthenticateResult.NoResult());
         }
 
-        var claims = new List<Claim> { new(ClaimTypes.NameIdentifier, "contract-test-caller") };
+        var objectId = Request.Headers.TryGetValue(ObjectIdHeader, out var oid)
+            ? oid.ToString()
+            : "contract-test-caller";
+
+        var claims = new List<Claim>
+        {
+            new(ClaimTypes.NameIdentifier, objectId),
+            new("oid", objectId),
+        };
+
         claims.AddRange(header
             .ToString()
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)

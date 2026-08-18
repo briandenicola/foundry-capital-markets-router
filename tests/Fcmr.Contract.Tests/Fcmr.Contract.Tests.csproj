@@ -23,6 +23,7 @@
       equals itself. The wire format is exercised as JSON throughout.
     -->
     <ProjectReference Include="../../src/router-service/router-service.csproj" />
+    <ProjectReference Include="../../src/approvals-service/approvals-service.csproj" />
     <ProjectReference Include="../../src/Fcmr.Router.Decisions/Fcmr.Router.Decisions.csproj" />
   </ItemGroup>
 

@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using FluentAssertions;
+using Fcmr.ApprovalsService.Security;
 using Xunit;
 
 namespace Fcmr.Contract.Tests;
@@ -10,10 +11,13 @@ namespace Fcmr.Contract.Tests;
 /// T-018 surface. Contract tests for <c>POST /v1/approvals/{id}/decision</c>, derived from
 /// <c>specs/001-router-core/contracts/approval-api.md</c> and AC-2.
 ///
-/// These are written now, against the contract, and are expected to fail until T-018 lands. They
-/// encode the three invariants the contract states outright — no consequential action without a
-/// 200 from this endpoint, expiry never implies approval, and every call writes an audit record —
+/// They encode the three invariants the contract states outright — no consequential action without
+/// a 200 from this endpoint, expiry never implies approval, and every call writes an audit record —
 /// plus the four rejection statuses that make the control demonstrable on stage.
+///
+/// Every caller here is a principal carrying an <c>oid</c> claim, never a header naming itself.
+/// ADR-011 made that the service's rule; the suite has to obey it or it would be proving a control
+/// the service does not actually have.
 /// </summary>
 public sealed class ApprovalContractTests : IClassFixture<ApprovalApiFactory>
 {
@@ -25,14 +29,36 @@ public sealed class ApprovalContractTests : IClassFixture<ApprovalApiFactory>
 
     private readonly ApprovalApiFactory factory;
 
-    public ApprovalContractTests(ApprovalApiFactory factory) => this.factory = factory;
+    public ApprovalContractTests(ApprovalApiFactory factory)
+    {
+        this.factory = factory;
+        Proposer = factory.As(ProposerObjectId, ApprovalRoles.Proposer);
+        Approver = factory.As(ApproverObjectId, ApprovalRoles.Approver);
+    }
+
+    /// <summary>Holds Propose only. Deliberately not granted Approve — that is the control.</summary>
+    private HttpClient Proposer { get; }
+
+    /// <summary>Holds Approve only, under a different object id.</summary>
+    private HttpClient Approver { get; }
+
+    /// <summary>
+    /// The proposing identity, granted the Approver role as well.
+    ///
+    /// This is the interesting adversary. A caller with no Approve role is stopped by the role
+    /// check, which proves nothing about segregation of duties; the case worth asserting is a
+    /// caller who is genuinely entitled to approve and is still refused on this specific proposal
+    /// because they are the one who raised it.
+    /// </summary>
+    private HttpClient ProposerWithApproverRole =>
+        factory.As(ProposerObjectId, ApprovalRoles.Proposer, ApprovalRoles.Approver);
 
     [Fact]
     public async Task Decision_ByTheProposingIdentity_Returns409SegregationOfDuties()
     {
-        var proposalId = await SeedAsync(state: "PendingApproval", proposedBy: ProposerObjectId);
+        var proposalId = await SeedAsync(SeedState.Pending);
 
-        using var response = await DecideAsync(proposalId, "Approved", reason: null, caller: ProposerObjectId);
+        using var response = await DecideAsync(proposalId, "Approved", reason: null, caller: ProposerWithApproverRole);
 
         response.StatusCode.Should().Be(HttpStatusCode.Conflict,
             "AC-2: the identity that originated a proposal cannot approve it");
@@ -42,9 +68,9 @@ public sealed class ApprovalContractTests : IClassFixture<ApprovalApiFactory>
     [Fact]
     public async Task Decision_ByTheProposingIdentity_DoesNotExecuteTheAction()
     {
-        var proposalId = await SeedAsync(state: "PendingApproval", proposedBy: ProposerObjectId);
+        var proposalId = await SeedAsync(SeedState.Pending);
 
-        using var rejected = await DecideAsync(proposalId, "Approved", reason: null, caller: ProposerObjectId);
+        using var rejected = await DecideAsync(proposalId, "Approved", reason: null, caller: ProposerWithApproverRole);
         _ = rejected;
 
         var state = await StateAsync(proposalId);
@@ -56,9 +82,9 @@ public sealed class ApprovalContractTests : IClassFixture<ApprovalApiFactory>
     [Fact]
     public async Task Decision_OnATerminalProposal_Returns409InvalidTransition()
     {
-        var proposalId = await SeedAsync(state: "Approved", proposedBy: ProposerObjectId);
+        var proposalId = await SeedAsync(SeedState.Approved);
 
-        using var response = await DecideAsync(proposalId, "Rejected", "Changed my mind.", ApproverObjectId);
+        using var response = await DecideAsync(proposalId, "Rejected", "Changed my mind.", Approver);
 
         response.StatusCode.Should().Be(HttpStatusCode.Conflict,
             "terminal states are final; the data model permits no transition out of one");
@@ -71,9 +97,9 @@ public sealed class ApprovalContractTests : IClassFixture<ApprovalApiFactory>
     [InlineData("Expired")]
     public async Task Decision_OnAnyTerminalState_Returns409InvalidTransition(string terminalState)
     {
-        var proposalId = await SeedAsync(state: terminalState, proposedBy: ProposerObjectId);
+        var proposalId = await SeedAsync(Enum.Parse<SeedState>(terminalState));
 
-        using var response = await DecideAsync(proposalId, "Approved", null, ApproverObjectId);
+        using var response = await DecideAsync(proposalId, "Approved", null, Approver);
 
         response.StatusCode.Should().BeOneOf(
             [HttpStatusCode.Conflict, HttpStatusCode.Gone],
@@ -84,9 +110,9 @@ public sealed class ApprovalContractTests : IClassFixture<ApprovalApiFactory>
     [Fact]
     public async Task Decision_OnAnExpiredProposal_Returns410Expired()
     {
-        var proposalId = await SeedAsync(state: "PendingApproval", proposedBy: ProposerObjectId, expired: true);
+        var proposalId = await SeedAsync(SeedState.Pending, expired: true);
 
-        using var response = await DecideAsync(proposalId, "Approved", null, ApproverObjectId);
+        using var response = await DecideAsync(proposalId, "Approved", null, Approver);
 
         response.StatusCode.Should().Be(HttpStatusCode.Gone,
             "contracts/approval-api.md: a proposal past expiresAt is 410 and will never execute");
@@ -96,9 +122,9 @@ public sealed class ApprovalContractTests : IClassFixture<ApprovalApiFactory>
     [Fact]
     public async Task ExpiredProposal_IsNeverRecordedAsApproved()
     {
-        var proposalId = await SeedAsync(state: "PendingApproval", proposedBy: ProposerObjectId, expired: true);
+        var proposalId = await SeedAsync(SeedState.Pending, expired: true);
 
-        using var attempt = await DecideAsync(proposalId, "Approved", null, ApproverObjectId);
+        using var attempt = await DecideAsync(proposalId, "Approved", null, Approver);
         _ = attempt;
 
         var state = await StateAsync(proposalId);
@@ -111,7 +137,7 @@ public sealed class ApprovalContractTests : IClassFixture<ApprovalApiFactory>
     [Fact]
     public async Task Decision_WithoutTheApproverRole_Returns403()
     {
-        var proposalId = await SeedAsync(state: "PendingApproval", proposedBy: ProposerObjectId);
+        var proposalId = await SeedAsync(SeedState.Pending);
 
         using var message = new HttpRequestMessage(
             HttpMethod.Post, $"/v1/approvals/{proposalId}/decision")
@@ -119,7 +145,7 @@ public sealed class ApprovalContractTests : IClassFixture<ApprovalApiFactory>
             Content = Body("Approved", null),
         };
 
-        using var response = await factory.Client.SendAsync(message);
+        using var response = await factory.Anonymous.SendAsync(message);
 
         response.StatusCode.Should().BeOneOf(
             [HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden],
@@ -129,9 +155,9 @@ public sealed class ApprovalContractTests : IClassFixture<ApprovalApiFactory>
     [Fact]
     public async Task Decision_RejectedWithoutAReason_IsRefused()
     {
-        var proposalId = await SeedAsync(state: "PendingApproval", proposedBy: ProposerObjectId);
+        var proposalId = await SeedAsync(SeedState.Pending);
 
-        using var response = await DecideAsync(proposalId, "Rejected", reason: null, caller: ApproverObjectId);
+        using var response = await DecideAsync(proposalId, "Rejected", reason: null, caller: Approver);
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest,
             "the contract makes reason required on rejection. A rejection without a recorded " +
@@ -141,10 +167,10 @@ public sealed class ApprovalContractTests : IClassFixture<ApprovalApiFactory>
     [Fact]
     public async Task Decision_ByADistinctApprover_Returns200AndRecordsTheDecision()
     {
-        var proposalId = await SeedAsync(state: "PendingApproval", proposedBy: ProposerObjectId);
+        var proposalId = await SeedAsync(SeedState.Pending);
 
         using var response = await DecideAsync(
-            proposalId, "Approved", "Best-execution rationale is sound; venue confirmed.", ApproverObjectId);
+            proposalId, "Approved", "Best-execution rationale is sound; venue confirmed.", Approver);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         (await StateAsync(proposalId)).Should().Be("Approved");
@@ -153,9 +179,9 @@ public sealed class ApprovalContractTests : IClassFixture<ApprovalApiFactory>
     [Fact]
     public async Task PendingQueue_ReturnsProposalsWithAnEvidencePacketSummary()
     {
-        _ = await SeedAsync(state: "PendingApproval", proposedBy: ProposerObjectId);
+        _ = await SeedAsync(SeedState.Pending);
 
-        using var response = await factory.Client.GetAsync(
+        using var response = await Approver.GetAsync(
             new Uri("/v1/approvals?state=PendingApproval", UriKind.Relative));
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -168,9 +194,9 @@ public sealed class ApprovalContractTests : IClassFixture<ApprovalApiFactory>
     [Fact]
     public async Task EvidencePacket_CarriesTheHashThatDetectsTampering()
     {
-        var proposalId = await SeedAsync(state: "PendingApproval", proposedBy: ProposerObjectId);
+        var proposalId = await SeedAsync(SeedState.Pending);
 
-        using var response = await factory.Client.GetAsync(
+        using var response = await Approver.GetAsync(
             new Uri($"/v1/approvals/{proposalId}", UriKind.Relative));
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -206,48 +232,172 @@ public sealed class ApprovalContractTests : IClassFixture<ApprovalApiFactory>
         return document.RootElement.TryGetProperty("error", out var error) ? error.GetString() : null;
     }
 
-    private Task<HttpResponseMessage> DecideAsync(
-        string proposalId, string decision, string? reason, string caller)
+    private static Task<HttpResponseMessage> DecideAsync(
+        string proposalId, string decision, string? reason, HttpClient caller)
     {
         var message = new HttpRequestMessage(HttpMethod.Post, $"/v1/approvals/{proposalId}/decision")
         {
             Content = Body(decision, reason),
         };
 
-        // Gap 2 in CONTRACT-FINDINGS.md: the contract does not say how the caller's Entra object
-        // id reaches decidedByObjectId, so the identity is carried here in the only way a test can
-        // express it. When T-018 defines the real mechanism this line changes and the assertions
-        // do not, which is the point of keeping them apart.
-        message.Headers.Add("X-Fcmr-Caller-Object-Id", caller);
-        return factory.Client.SendAsync(message);
+        // No identity header. Per ADR-011 the deciding identity is the token's oid claim, which the
+        // client already carries, and a request that names an identity is refused with 400.
+        return caller.SendAsync(message);
     }
 
     private async Task<string?> StateAsync(string proposalId)
     {
-        using var response = await factory.Client.GetAsync(
+        using var response = await Approver.GetAsync(
             new Uri($"/v1/approvals/{proposalId}", UriKind.Relative));
         var payload = await response.Content.ReadAsStringAsync();
         using var document = JsonDocument.Parse(payload);
         return document.RootElement.TryGetProperty("state", out var state) ? state.GetString() : null;
     }
 
-    /// <summary>
-    /// Places a proposal in a known state.
-    ///
-    /// Gap 1 in CONTRACT-FINDINGS.md: <c>contracts/approval-api.md</c> publishes no way to create
-    /// a proposal, so there is no contract-sanctioned route to the PendingApproval state that the
-    /// rest of this file asserts about. Inventing one here would make the suite test a fiction, so
-    /// it throws instead and the gap stays visible.
-    /// </summary>
-    private static Task<string> SeedAsync(string state, string proposedBy, bool expired = false)
+    /// <summary>The states a test can ask for. Each is reached through the published contract.</summary>
+    private enum SeedState
     {
-        _ = state;
-        _ = proposedBy;
-        _ = expired;
+        Pending,
+        Approved,
+        Rejected,
+        Expired,
+    }
 
-        throw new ContractSurfaceMissingException(
-            "contracts/approval-api.md defines no proposal-creation affordance, so a contract " +
-            "test cannot reach PendingApproval. T-018 must publish one — a lane service endpoint " +
-            "or an explicit seeding contract — before these tests can run.");
+    /// <summary>
+    /// Places a proposal in a known state, using only the published contract.
+    ///
+    /// Gap 1 in CONTRACT-FINDINGS.md is closed: <c>POST /v1/approvals</c> exists, so PendingApproval
+    /// is reachable without the suite inventing a back door. Every other state is reached by driving
+    /// the real endpoints, which means the setup for one test is itself an assertion that another
+    /// test's subject works. A seeding shortcut would have hidden that.
+    ///
+    /// Expiry is produced by proposing a genuinely short-lived record and waiting for it, because
+    /// the domain refuses an expiry that is not in the future and rightly so. The alternative —
+    /// a test-only clock override reachable from configuration — would put a mechanism for
+    /// backdating approvals into the deployed artefact, which is precisely the thing this service
+    /// exists to make impossible.
+    /// </summary>
+    private async Task<string> SeedAsync(SeedState state, bool expired = false)
+    {
+        var lifetime = expired || state == SeedState.Expired
+            ? TimeSpan.FromMilliseconds(750)
+            : TimeSpan.FromHours(1);
+
+        using var created = await Proposer.PostAsync(
+            new Uri("/v1/approvals", UriKind.Relative),
+            EvidenceBody(DateTimeOffset.UtcNow.Add(lifetime)));
+
+        created.StatusCode.Should().Be(HttpStatusCode.Created,
+            "the rest of this test depends on a proposal existing; if creation is broken the " +
+            "failure should say so rather than surfacing as a confusing 404 later");
+
+        using var document = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+        var id = document.RootElement.GetProperty("id").GetString()!;
+
+        switch (state)
+        {
+            case SeedState.Approved:
+                using (var r = await DecideAsync(id, "Approved", "Seeded for a terminal-state assertion.", Approver))
+                {
+                    r.StatusCode.Should().Be(HttpStatusCode.OK);
+                }
+
+                break;
+
+            case SeedState.Rejected:
+                using (var r = await DecideAsync(id, "Rejected", "Seeded for a terminal-state assertion.", Approver))
+                {
+                    r.StatusCode.Should().Be(HttpStatusCode.OK);
+                }
+
+                break;
+
+            case SeedState.Expired:
+                await WaitForExpiryAsync(lifetime);
+
+                // The record is past expiresAt but nothing has said so yet. Expiry is a transition
+                // that gets recorded, not a fact inferred at read time, so a decision attempt is
+                // what moves it to Expired and writes the audit event.
+                using (var r = await DecideAsync(id, "Approved", null, Approver))
+                {
+                    r.StatusCode.Should().Be(HttpStatusCode.Gone);
+                }
+
+                break;
+
+            case SeedState.Pending:
+            default:
+                if (expired)
+                {
+                    await WaitForExpiryAsync(lifetime);
+                }
+
+                break;
+        }
+
+        return id;
+    }
+
+    private static Task WaitForExpiryAsync(TimeSpan lifetime) =>
+        Task.Delay(lifetime + TimeSpan.FromMilliseconds(250));
+
+    /// <summary>
+    /// A complete evidence packet. Every required member is populated with plausible values because
+    /// the domain will not build a packet from absent data, and a test that supplied placeholders
+    /// would be asserting against a shape the lanes will never produce.
+    /// </summary>
+    private static StringContent EvidenceBody(DateTimeOffset expiresAt)
+    {
+        var body = new
+        {
+            lane = "OrderRouting",
+            expiresAt,
+            evidencePacket = new
+            {
+                correlationId = Guid.NewGuid().ToString(),
+                lane = "OrderRouting",
+                inputs = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["instrument"] = "US912828XG49",
+                    ["side"] = "Buy",
+                    ["quantity"] = "5000000",
+                },
+                retrievedSources = new[]
+                {
+                    new
+                    {
+                        documentId = "venue-analysis-2026-08",
+                        chunkId = "c-14",
+                        excerpt = "Displayed liquidity in the on-the-run 10y concentrated on venue B during the London close.",
+                        score = 0.91,
+                    },
+                },
+                routingDecision = new
+                {
+                    outcome = "Routed",
+                    complexityScore = 0.62,
+                    costCeilingUsd = 0.25m,
+                    selectedTier = "Standard",
+                    selectedDeployment = "gpt-5.4",
+                    selectedVendor = "AzureOpenAI",
+                    policySetId = "CapitalMarkets-US",
+                    policySetVersion = 1,
+                    rationale = "Moderate complexity within the standard cost ceiling.",
+                },
+                proposedAction = new
+                {
+                    kind = "RouteOrder",
+                    summary = "Route 5,000,000 of the on-the-run 10y to venue B.",
+                    fields = new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["venue"] = "B",
+                        ["strategy"] = "Passive",
+                    },
+                },
+                unattributableClaims = Array.Empty<string>(),
+            },
+        };
+
+        return new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
     }
 }

@@ -101,19 +101,17 @@ jobs:
         run: ./scripts/check-coverage.sh 70 Fcmr.Router.Decisions
 
   contract-conformance:
-    name: contract conformance (reporting only)
+    name: contract conformance
     runs-on: ubuntu-latest
-    # NOT a required check, and this is scheduled to change rather than left open-ended.
+    # Required, as of T-018. The expiry recorded on this job when it was advisory has been reached:
+    # the approval host now exists and serves the whole of specs/001-router-core/contracts/, so
+    # every published operation is exercised over real HTTP and there is nothing left that is
+    # expected to fail.
     #
-    # This job measures how much of the published contract in specs/001-router-core/contracts/ is
-    # actually served. It is expected to fail while T-018's approval host does not exist, and that
-    # failure is the signal, not noise -- deleting the suite to get a green board would delete the
-    # only thing that reports the gap.
-    #
-    # EXPIRY: this job becomes a required check when T-018 lands the approval API host. Recorded
-    # against T-018 in specs/001-router-core/tasks.md. A non-blocking job with no date on which it
-    # blocks is a skip with more YAML.
-    continue-on-error: true
+    # It matters that this blocks rather than reports. The approval API is where Hard Rule 1 is
+    # enforced -- segregation of duties, expiry, terminal-state finality, the audit record on every
+    # call. A regression here is a compliance claim becoming false while the board stays green, and
+    # an advisory job would let that merge.
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6

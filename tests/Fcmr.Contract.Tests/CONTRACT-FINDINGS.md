@@ -4,6 +4,11 @@ Raised while writing `tests/Fcmr.Contract.Tests` from the published contracts ra
 implementations. Every item here is a place where the contract does not say enough for two people
 to build the same thing. None has been resolved by picking an interpretation.
 
+**Status after T-018:** the approvals host exists and all 65 contract cases pass. Gaps 1, 2, 3, 5,
+6 and 8 are closed. Gap 4 remains open and unowned; Gap 7 is deferred to T-035. The two open items
+are left here rather than deleted, because a findings file that only records solved problems stops
+being read.
+
 Sources read: `specs/001-router-core/contracts/router-api.md`,
 `specs/001-router-core/contracts/approval-api.md`,
 `specs/002-governed-exchange/contracts/router-api-policy-extension.md`,

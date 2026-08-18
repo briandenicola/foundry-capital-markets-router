@@ -64,13 +64,17 @@ Last updated 2026-08-14.
 ## Phase 3 — Approval gate (day 7 to 9)
 
 - [x] **T-017** Approval domain model, state machine, and evidence-packet hashing.
-- **T-018** Approval API per contract, segregation-of-duties enforcement, and the expiry job.
-  **Carries a CI expiry:** the `contract-conformance` job in `.github/workflows/quality-gate.yml`
-  is non-required *only* until this task lands. `Fcmr.Contract.Tests` currently fails 13 approval
-  cases because no approval API host exists, which is the job reporting a real gap rather than
-  noise. **On completion of T-018, remove `continue-on-error: true` from that job and add it to
-  the required checks.** A non-blocking job with no recorded date on which it becomes blocking is
-  a skip with more YAML. The 28 router contract cases already pass and must not regress.
+- [x] **T-018** Approval API per contract, with segregation-of-duties enforcement.
+  `src/approvals-service` serves all four published operations. The proposing and deciding
+  identities are read from the token's `oid` claim and refused if supplied in a request (ADR-011),
+  so the segregation-of-duties check compares two values no caller can choose. All 65 contract
+  cases pass, up from 13 failing. **The CI expiry recorded here has been discharged:**
+  `contract-conformance` no longer carries `continue-on-error` and is now a required check.
+- **T-018a** Expiry sweeper. Today a proposal past `expiresAt` is transitioned and audited the
+  next time anyone touches it, which is correct but lazy: an abandoned proposal sits in the queue
+  reading `PendingApproval` until someone looks. The queue is what the approver is shown on stage,
+  so a background sweep is needed for it to be honest without a reader. Split out of T-018 rather
+  than folded into it, because the API is complete and shipping it should not wait on the sweeper.
 - **T-019** Append-only auditEvents, with a service identity holding no update or delete rights.
 - **T-020** One-query correlation reconstruction endpoint satisfying AC-8.
 

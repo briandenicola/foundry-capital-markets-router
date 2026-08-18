@@ -3,6 +3,7 @@
     <Project Path="src/Fcmr.Approvals.Domain/Fcmr.Approvals.Domain.csproj" />
     <Project Path="src/Fcmr.Demo.Data/Fcmr.Demo.Data.csproj" />
     <Project Path="src/Fcmr.Router.Decisions/Fcmr.Router.Decisions.csproj" />
+    <Project Path="src/approvals-service/approvals-service.csproj" />
     <Project Path="src/router-service/router-service.csproj" />
   </Folder>
   <Folder Name="/tests/">

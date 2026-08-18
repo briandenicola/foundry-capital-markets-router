@@ -9,7 +9,7 @@ vars:
   # Services with a Dockerfile today. The three lane services are stubs until T-023, T-024,
   # and T-025; listing them here before they build would only move the failure further from
   # its cause.
-  BUILDABLE: router-service
+  BUILDABLE: router-service approvals-service
 
 tasks:
   default:
