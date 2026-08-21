@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Fcmr.ServiceDefaults.Security;
 using Microsoft.Identity.Web;
 
 namespace Fcmr.ApprovalsService.Security;
@@ -29,22 +30,6 @@ public static class ApprovalRoles
 /// </summary>
 public static class ApprovalsAuthorization
 {
-    /// <summary>
-    /// Environment variables set by the platforms this service actually deploys to. Their presence
-    /// means the process is not a developer's machine, whatever the host calls its environment.
-    /// Mirrors <c>RouterAuthorization</c>; the reasoning is identical and is documented there.
-    /// </summary>
-    private static readonly string[] ManagedPlatformMarkers =
-    [
-        "CONTAINER_APP_NAME",
-        "CONTAINER_APP_REVISION",
-        "CONTAINER_APP_ENV_DNS_SUFFIX",
-        "WEBSITE_SITE_NAME",
-        "KUBERNETES_SERVICE_HOST",
-        "MSI_ENDPOINT",
-        "IDENTITY_ENDPOINT",
-    ];
-
     /// <summary>
     /// Claim types that carry an Entra object id, in the order they are preferred.
     ///
@@ -97,24 +82,15 @@ public static class ApprovalsAuthorization
     {
         ArgumentNullException.ThrowIfNull(lookup);
 
-        if (IsEnforced(configuration, environment))
-        {
-            return;
-        }
-
-        var marker = Array.Find(ManagedPlatformMarkers, m => !string.IsNullOrEmpty(lookup(m)));
-
-        if (marker is null)
-        {
-            return;
-        }
-
-        throw new InvalidOperationException(
-            $"Approval role enforcement is disabled, but '{marker}' shows this process is running on a " +
-            "managed Azure platform rather than a developer workstation. No consequential action may " +
-            "execute without a recorded human approval (Hard Rule 1), and an unauthenticated approvals " +
-            "service records approvals nobody made. Remove the Development environment setting, or set " +
-            "Approvals:Authorization:Enabled to true.");
+        ManagedPlatform.GuardAgainstUnauthenticatedDeployment(
+            isEnforced: IsEnforced(configuration, environment),
+            disabledControl: "Approval role enforcement",
+            consequence:
+                "No consequential action may execute without a recorded human approval " +
+                "(Principle I), and an unauthenticated approvals service records approvals nobody " +
+                "made.",
+            settingPath: "Approvals:Authorization:Enabled",
+            lookup: lookup);
     }
 
     /// <summary>True unless enforcement is switched off <em>and</em> the host is Development.</summary>

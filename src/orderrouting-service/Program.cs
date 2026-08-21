@@ -1,26 +1,29 @@
 using System.Text.Json.Serialization;
+using Fcmr.OrderRoutingService.Endpoints;
+using Fcmr.OrderRoutingService.Hosting;
+using Fcmr.OrderRoutingService.Persistence;
 using Fcmr.ServiceDefaults.Correlation;
 using Fcmr.ServiceDefaults.Health;
-using Fcmr.ApprovalsService.Endpoints;
-using Fcmr.ApprovalsService.Persistence;
-using Fcmr.ApprovalsService.Security;
+using Fcmr.ServiceDefaults.Security;
+using Fcmr.ServiceDefaults.Telemetry;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddProblemDetails();
 
-// Enums cross the wire as names. An audit record holding "2" where it should hold "Rejected" is
-// one enum reorder away from being wrong.
+// Enums cross the wire as names. An audit record holding "2" where it should hold "Halted" is one
+// enum reorder away from being wrong.
 builder.Services.ConfigureHttpJsonOptions(o =>
     o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddCorrelationId();
-builder.Services.AddApprovalsAuthorization(builder.Configuration, builder.Environment);
+builder.Services.AddFcmrTelemetry(builder.Configuration, OrderRoutingActivitySource.Name);
 
-// T-019 replaces this registration with the Cosmos adapter. Nothing above the port changes when
-// it does, which is why the port exists before the adapter.
-builder.Services.AddSingleton<IApprovalStore, InMemoryApprovalStore>();
+var authorization = OrderRoutingAuthorization.Create();
+authorization.Register(builder.Services, builder.Configuration, builder.Environment);
+
+builder.Services.AddSingleton<IProposalStore, InMemoryProposalStore>();
 
 var app = builder.Build();
 
@@ -28,15 +31,14 @@ var app = builder.Build();
 // the audit trail can be searched by.
 app.UseCorrelationId();
 
-if (ApprovalsAuthorization.IsEnforced(app.Configuration, app.Environment))
+if (authorization.IsEnforced(app.Configuration, app.Environment))
 {
     app.UseAuthentication();
     app.UseAuthorization();
 }
 
 app.MapFcmrHealthEndpoints();
-
-app.MapApprovalEndpoints();
+app.MapOrderRoutingEndpoints();
 
 app.Run();
 

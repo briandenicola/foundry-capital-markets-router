@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Fcmr.ServiceDefaults.Correlation;
 
 namespace Fcmr.RouterService.Contracts;
 
@@ -97,10 +98,10 @@ public static class RouteRequestValidator
         }
 
         if (request.CorrelationId is not null &&
-            !Correlation.CorrelationIdFormat.IsAcceptable(request.CorrelationId))
+            !CorrelationIdFormat.IsAcceptable(request.CorrelationId))
         {
             errors.Add(
-                $"correlationId must be 1 to {Correlation.CorrelationIdFormat.MaxLength} characters of " +
+                $"correlationId must be 1 to {CorrelationIdFormat.MaxLength} characters of " +
                 "letters, digits, hyphen, underscore, dot, or colon.");
         }
 

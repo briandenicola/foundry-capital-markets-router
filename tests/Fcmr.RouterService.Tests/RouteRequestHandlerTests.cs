@@ -2,7 +2,7 @@ using System.Text.Json;
 using Fcmr.Router.Decisions;
 using Fcmr.RouterService.Configuration;
 using Fcmr.RouterService.Contracts;
-using Fcmr.RouterService.Correlation;
+using Fcmr.ServiceDefaults.Correlation;
 using Fcmr.RouterService.Persistence;
 using Fcmr.RouterService.Routing;
 using FluentAssertions;

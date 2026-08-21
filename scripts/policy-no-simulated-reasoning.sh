@@ -49,10 +49,16 @@ fi
 
 # The simulated OMS is permitted and required (T-034), but only for *market execution*. If the
 # word 'simulate' migrates from execution into the reasoning path, the exception is being widened.
+#
+# One exact string is excluded: the filename of ADR-007 itself. Code that refuses to reason and
+# cites the ADR forbidding simulated reasoning is the control working, not the control breached,
+# and a gate that cannot be cited by the thing it governs pressures authors to stop citing it. The
+# exclusion is the literal filename and nothing else, so it cannot be widened by accident.
 oms_hits=$(grep -rniE 'simulat' "${SCAN_DIRS[@]}" \
   --include='*.cs' --include='*.ts' --include='*.tsx' \
   2>/dev/null | grep -v '/node_modules/' | grep -v '/obj/' | grep -v '/bin/' \
-  | grep -iE 'agent|reason|inference|model|completion|prompt' || true)
+  | grep -iE 'agent|reason|inference|model|completion|prompt' \
+  | grep -v '007-no-simulated-agent-reasoning\.md' || true)
 
 if [ -n "$oms_hits" ]; then
   echo "FAIL: 'simulated' appears alongside agent/model/reasoning terms."

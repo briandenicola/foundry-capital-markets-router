@@ -1,6 +1,10 @@
 using System.Diagnostics;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
-namespace Fcmr.RouterService.Correlation;
+namespace Fcmr.ServiceDefaults.Correlation;
 
 /// <summary>
 /// Establishes the correlation id for every request, echoes it, and puts it in the logging scope.
@@ -16,7 +20,7 @@ public sealed class CorrelationIdMiddleware(RequestDelegate next, ILogger<Correl
         LoggerMessage.Define<string, string>(
             LogLevel.Debug,
             new EventId(1, nameof(RequestStarted)),
-            "Router request accepted with correlation id from {CorrelationIdSource}: {CorrelationId}");
+            "Request accepted with correlation id from {CorrelationIdSource}: {CorrelationId}");
 
     public async Task InvokeAsync(HttpContext context, ICorrelationIdAccessor accessor)
     {

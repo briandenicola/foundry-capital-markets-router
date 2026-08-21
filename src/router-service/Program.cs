@@ -2,12 +2,13 @@ using System.Text.Json.Serialization;
 using Fcmr.Router.Decisions;
 using Fcmr.RouterService.Configuration;
 using Fcmr.RouterService.Contracts;
-using Fcmr.RouterService.Correlation;
+using Fcmr.ServiceDefaults.Correlation;
 using Fcmr.RouterService.Health;
 using Fcmr.RouterService.Persistence;
 using Fcmr.RouterService.Routing;
 using Fcmr.RouterService.Security;
 using Fcmr.RouterService.Telemetry;
+using Fcmr.ServiceDefaults.Telemetry;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 
@@ -25,7 +26,7 @@ builder.Services.AddOptions<RouterOptions>()
 
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddCorrelationId();
-builder.Services.AddRouterTelemetry(builder.Configuration);
+builder.Services.AddFcmrTelemetry(builder.Configuration, RouterActivitySource.Name);
 builder.Services.AddRouterAuthorization(builder.Configuration, builder.Environment);
 
 builder.Services.AddSingleton<IModelCatalog, ConfiguredModelCatalog>();

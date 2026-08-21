@@ -4,16 +4,21 @@
     <Project Path="src/Fcmr.Demo.Data/Fcmr.Demo.Data.csproj" />
     <Project Path="src/Fcmr.OrderRouting.Domain/Fcmr.OrderRouting.Domain.csproj" />
     <Project Path="src/Fcmr.Research.Domain/Fcmr.Research.Domain.csproj" />
+    <Project Path="src/Fcmr.ServiceDefaults/Fcmr.ServiceDefaults.csproj" />
     <Project Path="src/Fcmr.Surveillance.Domain/Fcmr.Surveillance.Domain.csproj" />
     <Project Path="src/Fcmr.Router.Decisions/Fcmr.Router.Decisions.csproj" />
     <Project Path="src/approvals-service/approvals-service.csproj" />
+    <Project Path="src/orderrouting-service/orderrouting-service.csproj" />
+    <Project Path="src/research-service/research-service.csproj" />
     <Project Path="src/router-service/router-service.csproj" />
+    <Project Path="src/surveillance-service/surveillance-service.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Fcmr.Approvals.Domain.Tests/Fcmr.Approvals.Domain.Tests.csproj" />
     <Project Path="tests/Fcmr.Contract.Tests/Fcmr.Contract.Tests.csproj" />
     <Project Path="tests/Fcmr.Demo.Data.Tests/Fcmr.Demo.Data.Tests.csproj" />
     <Project Path="tests/Fcmr.Persistence.Tests/Fcmr.Persistence.Tests.csproj" />
+    <Project Path="tests/Fcmr.LaneServices.Tests/Fcmr.LaneServices.Tests.csproj" />
     <Project Path="tests/Fcmr.OrderRouting.Domain.Tests/Fcmr.OrderRouting.Domain.Tests.csproj" />
     <Project Path="tests/Fcmr.Research.Domain.Tests/Fcmr.Research.Domain.Tests.csproj" />
     <Project Path="tests/Fcmr.Surveillance.Domain.Tests/Fcmr.Surveillance.Domain.Tests.csproj" />

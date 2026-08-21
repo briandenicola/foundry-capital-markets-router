@@ -8,7 +8,6 @@
 
   <ItemGroup>
     <PackageReference Include="Azure.Identity" />
-    <PackageReference Include="Azure.Monitor.OpenTelemetry.AspNetCore" />
     <PackageReference Include="Microsoft.Identity.Web" />
     <PackageReference Include="Azure.AI.Projects" />
     <PackageReference Include="Microsoft.Azure.Cosmos" />
@@ -17,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../Fcmr.Router.Decisions/Fcmr.Router.Decisions.csproj" />
+    <ProjectReference Include="../Fcmr.ServiceDefaults/Fcmr.ServiceDefaults.csproj" />
   </ItemGroup>
 
   <ItemGroup>

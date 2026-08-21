@@ -1,8 +1,10 @@
 using Azure.Identity;
 using Azure.Monitor.OpenTelemetry.AspNetCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using OpenTelemetry.Trace;
 
-namespace Fcmr.RouterService.Telemetry;
+namespace Fcmr.ServiceDefaults.Telemetry;
 
 /// <summary>
 /// Application Insights wiring, by configuration and managed identity.
@@ -22,12 +24,18 @@ public static class TelemetryRegistration
 {
     public const string ConnectionStringKey = "ApplicationInsights:ConnectionString";
 
-    public static IServiceCollection AddRouterTelemetry(
+    /// <param name="activitySourceName">
+    /// The service's own <c>ActivitySource</c>. Passed in rather than discovered, because a
+    /// service whose spans are silently not exported looks identical to one that produced none.
+    /// </param>
+    public static IServiceCollection AddFcmrTelemetry(
         this IServiceCollection services,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        string activitySourceName)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentException.ThrowIfNullOrWhiteSpace(activitySourceName);
 
         var connectionString = configuration[ConnectionStringKey]
                                ?? configuration["APPLICATIONINSIGHTS_CONNECTION_STRING"];
@@ -45,18 +53,12 @@ public static class TelemetryRegistration
                 o.Credential = new DefaultAzureCredential();
 
                 // ADR-004 puts the scoreboard on Application Insights with a five-second freshness
-                // budget, and disables sampling for router telemetry. A sampled decision is a
-                // decision missing from the audit trail, and Principle VI does not have a sampling
-                // clause.
+                // budget, and disables sampling. A sampled decision is a decision missing from the
+                // audit trail, and Principle VI does not have a sampling clause.
                 o.SamplingRatio = 1.0f;
             })
-            .WithTracing(t => t.AddSource(RouterActivitySource.Name));
+            .WithTracing(t => t.AddSource(activitySourceName));
 
         return services;
     }
-}
-
-public static class RouterActivitySource
-{
-    public const string Name = "Fcmr.RouterService";
 }

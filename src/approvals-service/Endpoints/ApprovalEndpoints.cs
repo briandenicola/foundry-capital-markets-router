@@ -1,6 +1,6 @@
 using Fcmr.Approvals.Domain;
 using Fcmr.ApprovalsService.Contracts;
-using Fcmr.ApprovalsService.Correlation;
+using Fcmr.ServiceDefaults.Correlation;
 using Fcmr.ApprovalsService.Persistence;
 using Fcmr.ApprovalsService.Security;
 

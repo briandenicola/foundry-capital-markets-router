@@ -1,11 +1,11 @@
 using System.Diagnostics.CodeAnalysis;
 
-namespace Fcmr.RouterService.Correlation;
+namespace Fcmr.ServiceDefaults.Correlation;
 
 /// <summary>Where the correlation id in force came from.</summary>
 public enum CorrelationIdSource
 {
-    /// <summary>The router minted it because the caller supplied none.</summary>
+    /// <summary>The service minted it because the caller supplied none.</summary>
     Generated,
 
     /// <summary>Taken from the inbound header.</summary>
@@ -17,6 +17,11 @@ public enum CorrelationIdSource
 
 /// <summary>
 /// Wire format rules for a caller-supplied correlation id.
+///
+/// Shared by every service. This was two divergent copies until the lane services landed; the
+/// approvals copy carried the note saying to extract it at that point rather than guess earlier,
+/// and five copies of the rule that makes AC-8 reconstruction possible is five chances for one of
+/// them to drift.
 ///
 /// The value is echoed in a response header and written into every log scope and audit record, so
 /// it is validated rather than trusted. An unbounded or control-character id is a header-splitting
@@ -54,7 +59,7 @@ public static class CorrelationIdFormat
 /// Scoped, and deliberately mutable in one direction only: the contract carries the id in the
 /// request body as well as the header, and the body cannot be read before the pipeline starts. So
 /// the middleware establishes a value up front and the endpoint may adopt a body-supplied id when
-/// — and only when — the router had generated one for want of anything better.
+/// — and only when — the service had generated one for want of anything better.
 /// </summary>
 public interface ICorrelationIdAccessor
 {

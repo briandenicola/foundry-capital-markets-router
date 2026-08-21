@@ -1,9 +1,10 @@
 using System.Security.Claims;
 using Fcmr.RouterService.Configuration;
 using Fcmr.RouterService.Contracts;
-using Fcmr.RouterService.Correlation;
+using Fcmr.ServiceDefaults.Correlation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Options;
+using Fcmr.ServiceDefaults.Security;
 using Microsoft.Identity.Web;
 
 namespace Fcmr.RouterService.Security;
@@ -21,23 +22,6 @@ namespace Fcmr.RouterService.Security;
 /// </summary>
 public static class RouterAuthorization
 {
-    /// <summary>
-    /// Environment variables set by the platforms this service actually deploys to.
-    ///
-    /// Their presence means the process is not a developer's machine, whatever the host has been
-    /// told to call its environment.
-    /// </summary>
-    private static readonly string[] ManagedPlatformMarkers =
-    [
-        "CONTAINER_APP_NAME",
-        "CONTAINER_APP_REVISION",
-        "CONTAINER_APP_ENV_DNS_SUFFIX",
-        "WEBSITE_SITE_NAME",
-        "KUBERNETES_SERVICE_HOST",
-        "MSI_ENDPOINT",
-        "IDENTITY_ENDPOINT",
-    ];
-
     public static IServiceCollection AddRouterAuthorization(
         this IServiceCollection services,
         IConfiguration configuration,
@@ -93,24 +77,15 @@ public static class RouterAuthorization
     {
         ArgumentNullException.ThrowIfNull(lookup);
 
-        if (IsEnforced(configuration, environment))
-        {
-            return;
-        }
-
-        var marker = Array.Find(ManagedPlatformMarkers, m => !string.IsNullOrEmpty(lookup(m)));
-
-        if (marker is null)
-        {
-            return;
-        }
-
-        throw new InvalidOperationException(
-            $"Router.Invoke enforcement is disabled, but '{marker}' shows this process is running on a " +
-            "managed Azure platform rather than a developer workstation. Disabling app-role " +
-            "enforcement is a local development affordance only. The router is the sole path to a " +
-            "model (Principle IV), so an unauthenticated router is that path standing open. " +
-            "Remove the Development environment setting, or set Router:Authorization:Enabled to true.");
+        ManagedPlatform.GuardAgainstUnauthenticatedDeployment(
+            isEnforced: IsEnforced(configuration, environment),
+            disabledControl: "Router.Invoke enforcement",
+            consequence:
+                "Disabling app-role enforcement is a local development affordance only. The router " +
+                "is the sole path to a model (Principle IV), so an unauthenticated router is that " +
+                "path standing open.",
+            settingPath: "Router:Authorization:Enabled",
+            lookup: lookup);
     }
 
     /// <summary>

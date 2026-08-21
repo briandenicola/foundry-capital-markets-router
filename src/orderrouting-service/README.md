@@ -13,7 +13,9 @@ The **decision logic is built and tested**; the service host is not.
 | Best-execution cost model and venue ranking | Built — `src/Fcmr.OrderRouting.Domain`, 41 tests, 100% line covered |
 | Policy boundaries and named-breach halting | Built — six boundary types |
 | Simulated OMS and the approval refusal ladder | Built — execution is unreachable without a valid approval |
-| Service host and HTTP surface | Not built |
+| Service host and HTTP surface | Built — `POST /v1/route-proposals`, `GET /v1/route-proposals/{id}`, `POST /v1/executions` |
+| Replay protection on an approval | Built — a second execution of one proposal answers 409 |
+| Durable proposal store | Not built — in-memory today; Cosmos-backed alongside T-014a |
 | Hosted Foundry agent (T-027e) | Not built |
 
 The deterministic core lives in `Fcmr.OrderRouting.Domain` for the same reason

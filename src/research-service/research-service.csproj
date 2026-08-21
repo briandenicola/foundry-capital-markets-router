@@ -1,9 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
-    <RootNamespace>Fcmr.ApprovalsService</RootNamespace>
-    <AssemblyName>Fcmr.ApprovalsService</AssemblyName>
-    <UserSecretsId>fcmr-approvals-service</UserSecretsId>
+    <RootNamespace>Fcmr.ResearchService</RootNamespace>
+    <AssemblyName>Fcmr.ResearchService</AssemblyName>
+    <UserSecretsId>fcmr-research-service</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
@@ -12,7 +12,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../Fcmr.Approvals.Domain/Fcmr.Approvals.Domain.csproj" />
+    <ProjectReference Include="../Fcmr.Research.Domain/Fcmr.Research.Domain.csproj" />
     <ProjectReference Include="../Fcmr.ServiceDefaults/Fcmr.ServiceDefaults.csproj" />
   </ItemGroup>
 

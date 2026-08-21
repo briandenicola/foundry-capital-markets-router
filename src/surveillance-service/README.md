@@ -15,7 +15,8 @@ The **decision logic is built and tested**; the service host is not.
 | Evidence assembly and triage gap reporting | Built — unscored alerts are reported, never dropped |
 | Escalation memo drafting and the approval gate | Built — no alert state changes without a recorded approval |
 | Measured precision and recall against ground truth | Built — `TriageQuality` |
-| Service host and HTTP surface | Not built |
+| Service host and HTTP surface | Built — `POST /v1/triage/rankings`, `POST /v1/escalations/drafts`, `POST /v1/escalations` |
+| Live alert scoring (`POST /v1/triage/runs`) | Refuses with 501 — ADR-007 forbids standing anything in for the unbuilt agent |
 | Hosted Foundry agent (T-027e) | Not built — scoring is the missing half |
 
 ## Reproducibility is a requirement, not a nicety

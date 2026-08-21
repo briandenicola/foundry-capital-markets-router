@@ -13,7 +13,8 @@ The **decision logic is built and tested**; the service host is not.
 | Attribution gate, refusal, coverage metric | Built — `src/Fcmr.Research.Domain`, 45 tests, 94% covered |
 | Prompt-injection detection (T-024) | Built — six categories, quarantine policy |
 | AI Search index and ingestion (T-022) | Not built — needs a subscription |
-| Service host and HTTP surface (T-023) | Not built |
+| Service host and HTTP surface | Built — `POST /v1/research/attribution` |
+| Brief synthesis (`POST /v1/research/briefs`) | Refuses with 501 — ADR-007 forbids standing anything in for the unbuilt agent |
 | Hosted Foundry agent (T-027d) | Not built |
 
 The deterministic core lives in `Fcmr.Research.Domain` for the same reason
