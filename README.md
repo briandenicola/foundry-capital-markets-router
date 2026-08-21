@@ -162,6 +162,7 @@ screens themselves are placeholders.
 ## Quick start
 
 Everything except the Azure deployment runs locally, with no subscription.
+[`docs/getting-started.md`](docs/getting-started.md) is the full offline path.
 
 Prerequisites: .NET 10 SDK, Node.js 22+, Docker, `go-task`, and Terraform.
 
@@ -219,6 +220,8 @@ reason), contract conformance, generated-API-type drift, diagram drift, and a pr
 
 Each of these guards fails closed and has been verified to fail, not merely to pass — a policy
 script that passes because it matches nothing is worse than no script.
+[`docs/governance-controls.md`](docs/governance-controls.md) records what each one fails on and the
+injected violation that proved it fires.
 
 ## Repository layout
 

@@ -2,7 +2,9 @@
 
 | Document | Purpose |
 |---|---|
+| getting-started.md | The offline path — everything that works with no Azure subscription |
 | architecture.md | How the system is put together and why |
+| governance-controls.md | The enforced controls, what each fails on, and proof each can fail |
 | agent-architecture.md | The three lane agents, their tools, and where their authority stops |
 | ui-design.md | Screen inventory, component and state architecture, required states |
 | threat-model.md | What can go wrong, and what stops it |
