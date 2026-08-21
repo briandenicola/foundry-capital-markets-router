@@ -11,6 +11,11 @@
 //                 generator; the diagrams are source-controlled artefacts, not
 //                 hand-edited drawings.
 //
+// Each diagram is written twice: the .excalidraw source of truth, and an .svg
+// rendered from the same element array. The SVG exists so the diagrams are
+// visible in the README without downloading anything, and it is generated
+// rather than exported so it cannot drift from the source it depicts.
+//
 // Node built-ins only. No network. Byte-for-byte reproducible: all "random"
 // element fields come from a counter-based PRNG with a fixed seed and `updated`
 // is the constant 1, so re-running never produces a spurious diff.
@@ -19,6 +24,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { DIAGRAMS } from './diagrams.mjs';
+import { renderSvg } from './render-svg.mjs';
 
 function parseArgs(argv) {
   const args = { out: 'docs/diagrams', check: false };
@@ -54,16 +60,20 @@ function sha256(text) {
 }
 
 function render() {
-  return DIAGRAMS.map(({ file, build }) => {
+  return DIAGRAMS.map(({ file, title, build }) => {
     const scene = build();
     const json = scene.toJSON();
+    const svg = renderSvg(scene.toDocument(), { title: title ?? file });
     const b = scene.bounds();
     return {
       file,
+      svgFile: file.replace(/\.excalidraw$/, '.svg'),
       json,
+      svg,
       elementCount: scene.elements.length,
       bounds: b,
       hash: sha256(json),
+      svgHash: sha256(svg),
     };
   });
 }
@@ -86,22 +96,26 @@ function main() {
 
   if (args.check) {
     let drift = 0;
-    for (const d of rendered) {
-      const path = join(outDir, d.file);
+    const compare = (name, expected, hash) => {
+      const path = join(outDir, name);
       if (!existsSync(path)) {
         process.stderr.write(`MISSING  ${path}\n`);
         drift += 1;
-        continue;
+        return;
       }
       const onDisk = readFileSync(path, 'utf8');
-      if (onDisk === d.json) {
-        process.stdout.write(`ok       ${d.file}  ${d.hash.slice(0, 16)}\n`);
+      if (onDisk === expected) {
+        process.stdout.write(`ok       ${name.padEnd(34)} ${hash.slice(0, 16)}\n`);
       } else {
         process.stderr.write(
-          `DRIFT    ${d.file}\n  on disk:   ${sha256(onDisk)}\n  generated: ${d.hash}\n`,
+          `DRIFT    ${name}\n  on disk:   ${sha256(onDisk)}\n  generated: ${hash}\n`,
         );
         drift += 1;
       }
+    };
+    for (const d of rendered) {
+      compare(d.file, d.json, d.hash);
+      compare(d.svgFile, d.svg, d.svgHash);
     }
     if (drift > 0) {
       process.stderr.write(
@@ -116,14 +130,21 @@ function main() {
   mkdirSync(outDir, { recursive: true });
   for (const d of rendered) {
     writeFileSync(join(outDir, d.file), d.json, 'utf8');
+    writeFileSync(join(outDir, d.svgFile), d.svg, 'utf8');
     const { width, height, minX, minY } = d.bounds;
     process.stdout.write(
       `wrote ${d.file.padEnd(34)} ${String(d.elementCount).padStart(4)} elements  ` +
         `canvas ${Math.round(width)}x${Math.round(height)} ` +
         `(origin ${Math.round(minX)},${Math.round(minY)})  ${d.hash.slice(0, 16)}\n`,
     );
+    process.stdout.write(
+      `      ${d.svgFile.padEnd(34)} ${String(Math.round(d.svg.length / 1024)).padStart(4)} KB` +
+        `        svg                              ${d.svgHash.slice(0, 16)}\n`,
+    );
   }
-  process.stdout.write(`\n${rendered.length} diagrams written to ${outDir}\n`);
+  process.stdout.write(
+    `\n${rendered.length} diagrams written to ${outDir} (.excalidraw source + .svg render)\n`,
+  );
 }
 
 main();

@@ -1507,9 +1507,274 @@ export function uiScreenMap() {
   return scene;
 }
 
+// ===========================================================================
+// 05 — Source architecture (code map)
+//
+// The one diagram that answers "what actually exists in this repository today?".
+// It follows the tree, not the plan: a project with no .csproj is drawn as a stub, because a
+// newcomer who cannot tell built code from a placeholder will spend a day discovering it.
+// ===========================================================================
+
+export function srcArchitecture() {
+  const scene = new Scene({ name: '05-src-architecture', seed: 0x55d6e7f8 });
+  const X0 = 80;
+  const W = 2720;
+  const INNER_X = X0 + 40;
+  const INNER_W = W - 80;
+
+  scene.header({
+    x: X0,
+    y: 60,
+    width: W,
+    title: '05 · src/ code map — what is built, what is deliberately empty',
+    subtitle:
+      'Conclusion: the governed decision path is real, dependency-free, exhaustively tested code; the model invocation and the three lane services are NOT implemented, and nothing in the repository fakes them.',
+  });
+
+  // ---- Edge ---------------------------------------------------------------
+  const edgeY = 210;
+  const edgeCols = columns({ x: INNER_X, count: 2, width: (INNER_W - 40) / 2, gap: 40 });
+  const edgeItems = [
+    {
+      title: 'src/webui  ·  Vite + React + TypeScript',
+      body:
+        'api/client.ts + api/types.generated.ts — types are GENERATED from the\ncontracts by scripts/generate-api-types.mjs and drift-checked in CI.\nshell/navigation.ts, ErrorBoundary.tsx, PlaceholderScreen.tsx\nstate/asyncState.ts + AsyncBoundary.tsx — the five required view states.\nScreens are still PlaceholderScreen: the shell is real, the beats are not.',
+      stroke: C.blue,
+      background: C.bgBlue,
+    },
+    {
+      title: 'tools/Fcmr.CosmosProvision  ·  console',
+      body:
+        'Creates the six containers in the local Cosmos emulator, which Terraform\ncannot reach. The duplication with infrastructure/cosmos.tf is deliberate\nand guarded: scripts/policy-cosmos-containers-match.sh fails the build if\nthe two ever disagree about a name or a partition key.',
+      stroke: C.ink,
+      background: C.white,
+    },
+  ];
+  const edgeH = rowHeight(edgeItems, edgeCols.at(0).width);
+  const edge = edgeItems.map((s, i) =>
+    scene.box({ ...s, x: edgeCols.at(i).x, y: edgeY, width: edgeCols.at(0).width, height: edgeH }),
+  );
+
+  // ---- Services (ASP.NET Core minimal APIs) -------------------------------
+  const svcY = edgeY + edgeH + 120;
+  const svcCols = columns({ x: INNER_X, count: 2, width: (INNER_W - 40) / 2, gap: 40 });
+  const svcItems = [
+    {
+      title: 'src/router-service  ·  the only path to a model',
+      body:
+        'Routing/RouteRequestHandler.cs — POST /v1/route. Translates HTTP only.\nContracts/RouteRequestValidator.cs · Routing/RouteStatusMapper.cs\nConfiguration/ModelCatalog.cs + RouterOptions.cs\nSecurity/RouterAuthorization.cs — Router.Invoke app role\nCorrelation/CorrelationIdMiddleware.cs — one id, end to end\nPersistence/{RoutingDecisionStore, CosmosRoutingDecisionStore, CosmosClientFactory}.cs\nTelemetry/TelemetryRegistration.cs · Health/DecisionStoreHealthCheck.cs',
+      stroke: C.blue,
+      background: C.bgBlue,
+    },
+    {
+      title: 'src/approvals-service  ·  the human gate',
+      body:
+        'Endpoints/ApprovalEndpoints.cs — propose · approve · reject · get.\nSecurity/ApprovalsAuthorization.cs — Proposer and Approver app roles,\ncaller identity read from the token oid claim, never from the body (ADR-011).\nPersistence/ApprovalStore.cs — IN-MEMORY today; Cosmos is T-014a.\nEvery refusal is audited too: "someone tried to approve their own\nproposal and was stopped" is the record an auditor comes looking for.',
+      stroke: C.orange,
+      background: C.bgYellow,
+    },
+  ];
+  const svcH = rowHeight(svcItems, svcCols.at(0).width);
+  const svc = svcItems.map((s, i) =>
+    scene.box({ ...s, x: svcCols.at(i).x, y: svcY, width: svcCols.at(0).width, height: svcH }),
+  );
+
+  // ---- Domain assemblies ---------------------------------------------------
+  const domY = svcY + svcH + 130;
+  const domCols = columns({ x: INNER_X + 20, count: 3, width: (INNER_W - 40 - 2 * 40) / 3, gap: 40 });
+  const domItems = [
+    {
+      title: 'src/Fcmr.Router.Decisions',
+      body:
+        'ZERO dependencies, by design.\nPolicyGate.cs — runs FIRST\nComplexityScorer.cs — pure\nTierSelector.cs · RoutingPlanner.cs\nPolicySetRepository + Validation\nRoutingDecision · ModelTier · ModelVendor\n\nNo ASP.NET, no Azure SDK, no clock.\nThat is what makes it exhaustively\ntestable — and it is coverage-gated\nat 70%, checked by scripts/check-coverage.sh.',
+      stroke: C.blue,
+      background: C.bgBlue,
+    },
+    {
+      title: 'src/Fcmr.Approvals.Domain',
+      body:
+        'ApprovalStateMachine.cs · Approval.cs\nApprovalState / Command / Refusal\nEvidencePacket.cs · ExecutionGate.cs\nApprovalAuditEvent.cs\n\nNothing here can execute anything.\nThe strongest statement it can make\nis an ExecutionGate — an authorisation,\nnot a receipt. Whatever acts must\npresent one (ADR-008).',
+      stroke: C.orange,
+      background: C.bgYellow,
+    },
+    {
+      title: 'src/Fcmr.Demo.Data',
+      body:
+        'DemoDataGenerator.cs\nDemoUniverse.cs · DemoRecords.cs\nDeterministicRandom.cs\n\nSynthetic only, seeded, committed.\nThe generated volume is gitignored,\nso the repository carries the recipe\nrather than the data (Principle VI).\nNo real counterparty exists anywhere.',
+      stroke: C.green,
+      background: C.bgGreen,
+    },
+  ];
+  const domH = rowHeight(domItems, domCols.at(0).width);
+  scene.group({
+    x: X0,
+    y: domY - 84,
+    width: W,
+    height: 84 + domH + 34,
+    label: 'DOMAIN ASSEMBLIES — the rules live here, never in an endpoint',
+    sublabel:
+      'Handlers translate HTTP and nothing else. A rule reachable only through a controller is a rule that can only be tested through a socket.',
+    stroke: C.ink,
+    background: C.white,
+    strokeWidth: 3,
+  });
+  const dom = domItems.map((s, i) =>
+    scene.box({ ...s, x: domCols.at(i).x, y: domY, width: domCols.at(0).width, height: domH }),
+  );
+
+  // ---- Not implemented -----------------------------------------------------
+  const gapY = domY + domH + 150;
+  const gapCols = columns({ x: INNER_X + 20, count: 4, width: (INNER_W - 40 - 3 * 40) / 4, gap: 40 });
+  const gapItems = [
+    {
+      title: 'src/research-service',
+      body: 'README.md only.\nNo .csproj, no code.\nTask T-023.',
+    },
+    {
+      title: 'src/surveillance-service',
+      body: 'README.md only.\nNo .csproj, no code.\nTask T-024.',
+    },
+    {
+      title: 'src/orderrouting-service',
+      body: 'README.md only.\nNo .csproj, no code.\nTask T-025.',
+    },
+    {
+      title: 'Model invocation',
+      body:
+        'RouteRequestHandler returns\nInferenceState.NotInvoked.\nNo vendor is called yet.\nADR-007 forbids a canned\nreply standing in for one.',
+    },
+  ];
+  const gapH = rowHeight(gapItems, gapCols.at(0).width);
+  scene.group({
+    x: X0,
+    y: gapY - 84,
+    width: W,
+    height: 84 + gapH + 34,
+    label: 'NOT IMPLEMENTED — and drawn here so the gap is visible rather than assumed',
+    sublabel:
+      'Awaiting the Azure subscription window. ADR-007: when a dependency is unreachable the system says which one and refuses — it never substitutes a recorded result.',
+    stroke: C.red,
+    background: C.white,
+    strokeWidth: 3,
+    strokeStyle: 'dashed',
+  });
+  gapItems.forEach((s, i) =>
+    scene.box({
+      ...s,
+      x: gapCols.at(i).x,
+      y: gapY,
+      width: gapCols.at(0).width,
+      height: gapH,
+      stroke: C.red,
+      background: C.white,
+      strokeStyle: 'dashed',
+    }),
+  );
+
+  // ---- Tests ---------------------------------------------------------------
+  const testY = gapY + gapH + 150;
+  const testCols = columns({ x: INNER_X + 20, count: 6, width: (INNER_W - 40 - 5 * 40) / 6, gap: 40 });
+  const testItems = [
+    { title: 'Router.Decisions.Tests', body: 'The 70% gate.\nPure unit tests.' },
+    { title: 'Approvals.Domain.Tests', body: 'State machine and\nsegregation of duties.' },
+    { title: 'RouterService.Tests', body: 'Handler, validator,\nstatus mapping.' },
+    { title: 'Contract.Tests', body: 'Both APIs through\ntheir published surface.' },
+    { title: 'Persistence.Tests', body: 'Real Cosmos emulator.\nFails loudly, never skips.' },
+    { title: 'Demo.Data.Tests', body: 'Generator determinism.' },
+  ];
+  const testH = rowHeight(testItems, testCols.at(0).width);
+  scene.group({
+    x: X0,
+    y: testY - 84,
+    width: W,
+    height: 84 + testH + 34,
+    label: 'tests/ — six projects',
+    sublabel:
+      'The persistence suite runs against a real Cosmos engine in Docker and fails with instructions when it is absent, rather than skipping green.',
+    stroke: C.green,
+    background: C.bgGreen,
+    strokeWidth: 3,
+  });
+  testItems.forEach((s, i) =>
+    scene.box({
+      ...s,
+      x: testCols.at(i).x,
+      y: testY,
+      width: testCols.at(0).width,
+      height: testH,
+      stroke: C.green,
+      background: C.white,
+      titleSize: 18,
+    }),
+  );
+
+  // ---- Flow arrows ---------------------------------------------------------
+  scene.arrow(edge[0], svc[0], {
+    sides: ['bottom', 'top'],
+    label: 'POST /v1/route\nEntra token',
+    color: C.blue,
+  });
+  // Routed along the gap between the two rows rather than straight across, so it does not cut
+  // diagonally through the domain band below.
+  scene.arrow(edge[0], svc[1], {
+    sides: ['bottom', 'top'],
+    elbow: 'h',
+    label: 'propose / approve\ntwo distinct identities',
+    color: C.orange,
+    // Placed explicitly in the clear gap between the two rows; the polyline centroid would land
+    // a third of the way down the descent, inside the box to its right.
+    labelAt: { x: (edge[0].cx + svc[1].cx) / 2, y: edgeY + edgeH + 62 },
+  });
+  // labelDy lifts these clear of the DOMAIN ASSEMBLIES group header the arrows pass through.
+  scene.arrow(svc[0], dom[0], {
+    sides: ['bottom', 'top'],
+    label: 'the whole decision',
+    color: C.blue,
+    labelDy: -34,
+  });
+  scene.arrow(svc[1], dom[1], {
+    sides: ['bottom', 'top'],
+    label: 'the whole ruleset',
+    color: C.orange,
+    labelDy: -34,
+  });
+
+  // ---- legend --------------------------------------------------------------
+  const legendY = testY + testH + 110;
+  scene.legend({
+    x: X0,
+    y: legendY,
+    width: 1260,
+    items: [
+      LEGEND_CHOKEPOINT,
+      LEGEND_HUMAN,
+      { stroke: C.green, background: C.bgGreen, text: 'Synthetic data and the tests that prove the rest.' },
+      {
+        stroke: C.red,
+        background: C.white,
+        strokeStyle: 'dashed',
+        text: 'NOT implemented. README only, or an explicit NotInvoked.',
+      },
+    ],
+  });
+  scene.box({
+    x: X0 + 1260 + 60,
+    y: legendY,
+    width: W - 1260 - 60,
+    title: 'How to read this repository in the right order',
+    body:
+      'Start at src/Fcmr.Router.Decisions. It has no dependencies, it holds every routing rule, and it is the only assembly the demo\'s central claim actually rests on — governance decides, the application does not.\nThen src/Fcmr.Approvals.Domain, which holds the human gate and, deliberately, no ability to act on it.\nThe services above them are thin on purpose: if you find a rule inside an endpoint, that is a defect, not a shortcut.\nEverything in the dashed red band is absent, not hidden. The demo can currently prove its governance and its privacy; it cannot yet prove an end-to-end model call, and it does not pretend to.',
+    stroke: C.blue,
+    background: C.white,
+  });
+
+  return scene;
+}
+
 export const DIAGRAMS = [
   { file: '01-platform-topology.excalidraw', build: platformTopology },
   { file: '02-request-decision-flow.excalidraw', build: requestDecisionFlow },
   { file: '03-agent-architecture.excalidraw', build: agentArchitecture },
   { file: '04-ui-screen-map.excalidraw', build: uiScreenMap },
+  { file: '05-src-architecture.excalidraw', build: srcArchitecture },
 ];

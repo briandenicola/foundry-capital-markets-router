@@ -193,9 +193,10 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      # The .excalidraw files are build output, not drawings. Regenerating them here is what stops
-      # the architecture picture quietly diverging from the architecture, which is the failure mode
-      # that makes diagrams untrustworthy and therefore unused.
+      # The .excalidraw sources AND the .svg renders are build output, not drawings. Regenerating
+      # both here is what stops the architecture picture quietly diverging from the architecture,
+      # which is the failure mode that makes diagrams untrustworthy and therefore unused. The SVG
+      # is checked too, precisely because it is the copy people actually look at in the README.
       - run: node scripts/diagrams/generate-diagrams.mjs --out docs/diagrams --check
       - run: node scripts/diagrams/validate.mjs docs/diagrams
 
