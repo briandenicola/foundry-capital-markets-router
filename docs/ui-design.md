@@ -24,20 +24,24 @@ assumes is decorative. Cost, rank, and quality all open to the record behind the
 
 ## Screen inventory
 
-| # | Screen | Route | Roles | Task | Beat |
-|---|---|---|---|---|---|
-| 1 | Request console | `/` | Router.Invoke | T-028 | 3, 5 |
-| 2 | Live scoreboard | `/scoreboard` | Router.Read | T-029 | 3 |
-| 3 | Cost comparison | `/scoreboard/comparison` | Router.Read | T-030 | 3 — **wow B** |
-| 4 | Decision detail | `/decisions/:id` | Router.Read | T-029 | 3, 8 |
-| 5 | Surveillance triage | `/surveillance` | Router.Read | T-031 | 4 — **wow C** |
-| 6 | Alert detail | `/surveillance/:id` | Router.Read | T-031 | 4 |
-| 7 | Approval queue | `/approvals` | Approver | T-032 | 6 |
-| 8 | Approval detail | `/approvals/:id` | Approver | T-032 | 6 |
-| 9 | Research | `/research` | Router.Invoke | T-033 | 7 — **wow D** |
-| 10 | Order routing | `/orders` | Router.Invoke | T-034 | — |
-| 11 | Audit reconstruction | `/audit/:correlationId` | Router.Read | T-020 | 8 |
-| 12 | Policy sets | `/policy` | Approver | new | 5 |
+"Built" below means the screen renders against the real wire contract with component tests, not
+that it has been exercised against a deployed service. No screen has been, because there is no
+deployment yet.
+
+| # | Screen | Route | Roles | Task | Beat | Status |
+|---|---|---|---|---|---|---|
+| 1 | Request console | `/` | Router.Invoke | T-028 | 3, 5 | Shell only |
+| 2 | Live scoreboard | `/scoreboard` | Router.Read | T-029 | 3 | Placeholder |
+| 3 | Cost comparison | `/scoreboard/comparison` | Router.Read | T-030 | 3 — **wow B** | Placeholder |
+| 4 | Decision detail | `/decisions/:id` | Router.Read | T-029 | 3, 8 | Placeholder |
+| 5 | Surveillance triage | `/surveillance` | Router.Read | T-031 | 4 — **wow C** | Placeholder |
+| 6 | Alert detail | `/surveillance/:id` | Router.Read | T-031 | 4 | Placeholder |
+| 7 | Approval queue | `/approvals` | Approver | T-032 | 6 | **Built** |
+| 8 | Approval detail | `/approvals/:id` | Approver | T-032 | 6 | **Built** |
+| 9 | Research | `/research` | Router.Invoke | T-033 | 7 — **wow D** | Placeholder |
+| 10 | Order routing | `/order-routing` | Router.Invoke | T-034 | 6 | **Built** |
+| 11 | Audit reconstruction | `/audit/:correlationId` | Router.Read | T-020 | 8 | Placeholder |
+| 12 | Policy sets | `/policy` | Approver | new | 5 | Not started |
 
 Screen 12 does not exist in the current task list. It is required for Beat 5 — the policy swap has
 to happen *somewhere*, and doing it in the Azure portal breaks the narrative that governance is a

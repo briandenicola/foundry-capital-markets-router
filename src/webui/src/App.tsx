@@ -1,7 +1,30 @@
+import type { ReactNode } from 'react';
 import { NavLink, Route, Routes, Navigate } from 'react-router-dom';
 import { ErrorBoundary } from './shell/ErrorBoundary';
 import { visibleScreens, type AppRole } from './shell/navigation';
 import { PlaceholderScreen } from './shell/PlaceholderScreen';
+import { ApprovalDetailRoute, ApprovalsQueueRoute } from './features/approvals/routes';
+import { OrderRoutingRoute } from './features/orderrouting/routes';
+import { useApiClient } from './app/apiClient';
+import type { ApiClient } from './api/client';
+
+export interface AppProps {
+  roles?: AppRole[];
+
+  /**
+   * The signed-in user's Entra object id.
+   *
+   * Null until MSAL is wired (T-028b), and null rather than a default: segregation of duties
+   * compares the approver against the proposer, and an id the UI invented would let the approve
+   * button light up for exactly the person it must not.
+   */
+  currentUserObjectId?: string | null;
+
+  /** Injected in tests. Production builds construct one from the environment. */
+  client?: ApiClient;
+}
+
+const noToken = () => Promise.resolve<string | null>(null);
 
 /**
  * Application shell.
@@ -9,8 +32,23 @@ import { PlaceholderScreen } from './shell/PlaceholderScreen';
  * Roles are hard-coded here until T-028b wires MSAL. The shape of the prop is the shape MSAL will
  * supply, so that task becomes a substitution rather than a rewrite.
  */
-export function App({ roles = ['Router.Invoke', 'Router.Read'] }: { roles?: AppRole[] }) {
+export function App({
+  roles = ['Router.Invoke', 'Router.Read', 'Approver'],
+  currentUserObjectId = null,
+  client,
+}: AppProps) {
   const screens = visibleScreens(roles);
+  const defaultClient = useApiClient(noToken);
+  const api = client ?? defaultClient;
+
+  // Screens that exist. Everything else still renders a placeholder naming its demo beat, so an
+  // unfinished screen reached during a rehearsal explains itself instead of looking broken.
+  const implemented: Record<string, ReactNode> = {
+    '/approvals': (
+      <ApprovalsQueueRoute client={api} roles={roles} currentUserObjectId={currentUserObjectId} />
+    ),
+    '/order-routing': <OrderRoutingRoute client={api} />,
+  };
 
   return (
     <div className="app">
@@ -33,9 +71,25 @@ export function App({ roles = ['Router.Invoke', 'Router.Read'] }: { roles?: AppR
               <Route
                 key={screen.path}
                 path={screen.path}
-                element={<PlaceholderScreen title={screen.title} beat={screen.beat} />}
+                element={
+                  implemented[screen.path] ?? (
+                    <PlaceholderScreen title={screen.title} beat={screen.beat} />
+                  )
+                }
               />
             ))}
+            {roles.includes('Approver') && (
+              <Route
+                path="/approvals/:id"
+                element={
+                  <ApprovalDetailRoute
+                    client={api}
+                    roles={roles}
+                    currentUserObjectId={currentUserObjectId}
+                  />
+                }
+              />
+            )}
             <Route path="*" element={<PlaceholderScreen title="Not found" />} />
           </Routes>
         </ErrorBoundary>

@@ -71,6 +71,11 @@ missing, never manufactured to make a record well-formed. See ADR-007 and Princi
 Returns pending proposals with evidence-packet summaries, scoped to the lanes the caller is
 entitled to approve. Requires the `Approver` app role.
 
+The response is a bare JSON array, not an envelope. Each row carries `proposedAction` — the queue
+has to say what it is asking someone to authorise — and a null `evidencePacket`: the full packet
+belongs on the detail response, because a packet delivered in bulk to a list nobody opened is not
+a packet anyone reviewed.
+
 ## GET /v1/approvals/{id}
 
 Returns the full evidence packet: inputs, retrieved sources, routing decision, proposed action, and

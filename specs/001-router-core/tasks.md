@@ -162,13 +162,21 @@ Three of the four wow moments are screens in this phase.
     stutter reads as "this does not scale."
   - **T-031b** Alert detail (screen 6) with evidence set and rationale.
   - **T-031c** Visible seed indicator supporting the AC-6 reproducibility claim on stage.
-- **T-032** Approval queue with evidence packet rendering and visible segregation-of-duties
-  blocking.
+- [x] **T-032** Approval queue with evidence packet rendering and visible segregation-of-duties
+  blocking. Screens 7 and 8. Blocked actions render disabled with the reason stated, never hidden.
+  The client-side segregation check is a courtesy that saves an approver a pointless round trip;
+  the service remains the control. With T-028b outstanding the current identity is null, and
+  `evaluateApproval` refuses on a null identity rather than permitting — guessing would enable
+  exactly what segregation of duties prevents.
 - **T-033** Research view with inline citations, coverage percentage, and the unattributable-claims
   panel. **Secondary wow moment D.** The panel is always present and states "no unattributable
   claims" when empty — a panel that only appears on failure teaches the audience it is an error.
-- **T-034** Simulated-OMS labelling everywhere order execution appears, on the record itself so a
-  screenshot out of context is still honest.
+- [x] **T-034** Simulated-OMS labelling everywhere order execution appears, on the record itself so a
+  screenshot out of context is still honest. Screen 10 renders proposal, policy halt, and execution
+  refusal with equal weight; `SimulatedBadge` reads `execution.executionMode` off the stored record
+  rather than a constant in the component. The execution panel forwards a retrieved approval record
+  verbatim and never assembles one, and offers an explicit no-approval attempt so the gate can be
+  seen refusing.
 - **T-042** **Policy sets screen (screen 12).** Previously unscheduled. Beat 5 has to change policy
   *somewhere*, and doing it in the Azure portal breaks the claim that governance is a first-class
   surface. Read-mostly with a per-vendor approval toggle is sufficient.

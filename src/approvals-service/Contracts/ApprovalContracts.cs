@@ -94,7 +94,7 @@ public sealed record ApprovalResponse
     public required string Id { get; init; }
     public required string CorrelationId { get; init; }
     public required Lane Lane { get; init; }
-    public required string State { get; init; }
+    public required ApprovalState State { get; init; }
     public required string EvidencePacketHash { get; init; }
     public required string ProposedByObjectId { get; init; }
     public string? DecidedByObjectId { get; init; }
@@ -103,6 +103,13 @@ public sealed record ApprovalResponse
     public required DateTimeOffset CreatedAt { get; init; }
     public DateTimeOffset? DecidedAt { get; init; }
     public EvidencePacket? EvidencePacket { get; init; }
+
+    /// <summary>
+    /// Carried on every response, including list rows that omit the full packet. approval-api.md
+    /// promises "evidence-packet summaries" on the list, and a queue that shows an approver a row
+    /// of identifiers without saying what they would be approving is not an approval queue.
+    /// </summary>
+    public required ProposedAction ProposedAction { get; init; }
 
     /// <summary>
     /// Recomputed at read time, not stored. A packet whose integrity cannot be checked is not
@@ -119,7 +126,7 @@ public sealed record ApprovalResponse
             Id = approval.Id,
             CorrelationId = approval.CorrelationId,
             Lane = approval.Lane,
-            State = approval.State.ToString(),
+            State = approval.State,
             EvidencePacketHash = approval.EvidencePacketHash,
             ProposedByObjectId = approval.ProposedByObjectId,
             DecidedByObjectId = approval.DecidedByObjectId,
@@ -128,6 +135,7 @@ public sealed record ApprovalResponse
             CreatedAt = approval.CreatedAt,
             DecidedAt = approval.DecidedAt,
             EvidencePacket = includePacket ? approval.EvidencePacket : null,
+            ProposedAction = approval.ProposedAction,
             EvidenceIntegrityVerified = approval.VerifyEvidenceIntegrity(),
         };
     }

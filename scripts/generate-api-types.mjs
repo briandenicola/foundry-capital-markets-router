@@ -16,7 +16,17 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const sourceDir = join(repoRoot, 'src', 'Fcmr.Router.Decisions');
+// Several assemblies now hold wire types: the decision record, the approval workflow, and the
+// order-routing lane. Listing them explicitly rather than scanning src/ keeps the export surface a
+// decision somebody made, not a consequence of where a file happened to be put.
+const sourceDirs = [
+  join(repoRoot, 'src', 'Fcmr.Router.Decisions'),
+  join(repoRoot, 'src', 'Fcmr.Approvals.Domain'),
+  join(repoRoot, 'src', 'Fcmr.OrderRouting.Domain'),
+  // The approvals wire contract lives with the service, not in the domain assembly. The UI must be
+  // typed against what the endpoint actually returns; the domain Approval is a different shape.
+  join(repoRoot, 'src', 'approvals-service', 'Contracts'),
+];
 const outputPath = join(repoRoot, 'src', 'webui', 'src', 'api', 'types.generated.ts');
 
 // Records whose shape is part of the HTTP surface. Anything not listed here stays server-side;
@@ -27,6 +37,23 @@ const EXPORTED_RECORDS = [
   'PolicyExclusion',
   'PolicySet',
   'PolicySetFieldChange',
+
+  // Approvals. The evidence packet is exported in full because the approval screen renders it and
+  // a summary type here would be a second place for the packet's shape to be decided.
+  'ApprovalResponse',
+  'EvidencePacket',
+  'EvidenceSource',
+  'ProposedAction',
+  'RoutingDecisionSummary',
+  'ApprovalRefusal',
+
+  // Order routing.
+  'RouteProposal',
+  'VenueEvaluation',
+  'VenueQuote',
+  'CostBreakdown',
+  'SimulatedExecution',
+  'PolicyBreach',
 ];
 
 const EXPORTED_ENUMS = [
@@ -36,6 +63,13 @@ const EXPORTED_ENUMS = [
   'ServingMode',
   'DataClassification',
   'PolicyExclusionKind',
+  'ApprovalState',
+  'ApprovalRefusalKind',
+  'Lane',
+  'OrderSide',
+  'VenueType',
+  'PolicyBoundary',
+  'ExecutionRefusalReason',
 ];
 
 const PRIMITIVES = {
@@ -48,9 +82,12 @@ const PRIMITIVES = {
 };
 
 function readSources() {
-  return readdirSync(sourceDir)
-    .filter((f) => f.endsWith('.cs'))
-    .map((f) => readFileSync(join(sourceDir, f), 'utf8'))
+  return sourceDirs
+    .flatMap((dir) =>
+      readdirSync(dir)
+        .filter((f) => f.endsWith('.cs'))
+        .map((f) => readFileSync(join(dir, f), 'utf8')),
+    )
     .join('\n');
 }
 
@@ -91,6 +128,24 @@ function parseRecords(src) {
       const [, required, rawType, propName] = p;
       props.push({ name: propName, required: Boolean(required), csharpType: rawType.trim() });
     }
+
+    // Expression-bodied properties are serialized exactly like stored ones, so omitting them
+    // produced a type that disagreed with the wire. SimulatedExecution.ExecutionMode is the case
+    // that caught it: the UI is required to read the SIMULATED label off the record itself (T-034),
+    // and a generated type that lacks the field forces the label to be hand-written somewhere,
+    // which is the drift this generator exists to prevent.
+    //
+    // They are never optional. A computed property always has a value.
+    const computedRe = /public ([\w<>,.?\s]+?)\s+(\w+)\s*=>/g;
+    let c;
+    while ((c = computedRe.exec(body)) !== null) {
+      const [, rawType, propName] = c;
+      if (props.some((existing) => existing.name === propName)) {
+        continue;
+      }
+      props.push({ name: propName, required: true, csharpType: rawType.trim() });
+    }
+
     records.set(name, props);
   }
   return records;
@@ -147,7 +202,9 @@ function generate() {
   const lines = [];
   lines.push('// GENERATED FILE -- DO NOT EDIT.');
   lines.push('//');
-  lines.push('// Source: src/Fcmr.Router.Decisions/*.cs');
+  for (const dir of sourceDirs) {
+    lines.push(`// Source: src/${dir.split(/[\\/]/).pop()}/*.cs`);
+  }
   lines.push('// Regenerate: node scripts/generate-api-types.mjs');
   lines.push('// CI asserts this file is in sync via: node scripts/generate-api-types.mjs --check');
   lines.push('');

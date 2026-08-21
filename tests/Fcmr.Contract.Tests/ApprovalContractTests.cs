@@ -189,6 +189,22 @@ public sealed class ApprovalContractTests : IClassFixture<ApprovalApiFactory>
         var payload = await response.Content.ReadAsStringAsync();
         using var document = JsonDocument.Parse(payload);
         document.RootElement.ValueKind.Should().Be(JsonValueKind.Array);
+
+        // The summary half of this test's name used to go unasserted, and the endpoint duly
+        // shipped rows carrying nothing but identifiers. approval-api.md promises "evidence-packet
+        // summaries", and an approver looking at a queue that cannot say what is being approved
+        // has no basis on which to approve anything.
+        var row = document.RootElement.EnumerateArray().First();
+
+        row.TryGetProperty("proposedAction", out var action).Should().BeTrue(
+            "a queue row must state the action it is asking someone to authorise");
+        action.TryGetProperty("summary", out var summary).Should().BeTrue();
+        summary.GetString().Should().NotBeNullOrWhiteSpace();
+
+        // The full packet stays on the detail response. Shipping every packet in the list would
+        // put evidence on screen that nobody opened, which is not the same as evidence reviewed.
+        row.TryGetProperty("evidencePacket", out var packet).Should().BeTrue();
+        packet.ValueKind.Should().Be(JsonValueKind.Null);
     }
 
     [Fact]

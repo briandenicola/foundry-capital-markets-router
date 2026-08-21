@@ -183,3 +183,275 @@ body {
   border-color: var(--border);
   cursor: not-allowed;
 }
+
+/* --------------------------------------------------------------------------
+   Screens 7, 8, and 10.
+
+   Type is sized for a projector at the back of a room, not a laptop at arm's
+   length: the smallest text here is 1rem, and nothing that carries a governance
+   claim is set in a muted colour.
+   -------------------------------------------------------------------------- */
+
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.screen__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.screen__title {
+  font-size: var(--text-heading);
+  margin: 0;
+}
+
+.screen__subtitle {
+  color: var(--ink-muted);
+  margin: 0;
+}
+
+.screen__footnote {
+  color: var(--ink-muted);
+  font-size: var(--text-caption);
+  margin: 0;
+}
+
+.button--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.button--danger {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.link {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.table__caption {
+  text-align: left;
+  padding: var(--space-3);
+  font-weight: 600;
+}
+
+.table th,
+.table td {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border);
+  vertical-align: top;
+}
+
+/* Ineligible venues stay legible. Fading them to near-invisible would hide the
+   half of the evaluation that proves the recommendation was a choice. */
+.row--ineligible {
+  background: var(--surface-sunken);
+}
+
+.tag {
+  display: inline-block;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius);
+  font-size: var(--text-caption);
+  font-weight: 600;
+}
+
+.tag--eligible {
+  background: #e6f4ec;
+  color: var(--success);
+}
+
+.tag--blocked {
+  background: #fdeceb;
+  color: var(--danger);
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+.kv dt {
+  color: var(--ink-muted);
+}
+
+.kv dd {
+  margin: 0;
+}
+
+.kv--inline {
+  grid-template-columns: repeat(auto-fit, minmax(12rem, max-content) minmax(8rem, 1fr));
+}
+
+.packet,
+.proposal,
+.execution,
+.decision,
+.ticket {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.packet__heading,
+.proposal__heading,
+.execution__heading,
+.decision__heading,
+.ticket__heading {
+  font-size: var(--text-subheading);
+  margin: 0;
+}
+
+.packet__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+/* The unattributable-claims panel is bordered even when it says "none". It is a
+   control, not an error state, and it has to look the same either way. */
+.packet__section--claims {
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+}
+
+.packet__empty {
+  color: var(--ink-muted);
+  margin: 0;
+}
+
+.sources,
+.claims {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.sources__item {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.sources__id {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+}
+
+.sources__score {
+  color: var(--ink-muted);
+  font-size: var(--text-caption);
+}
+
+.sources__excerpt {
+  margin: 0;
+  padding-left: var(--space-3);
+  border-left: 3px solid var(--border);
+}
+
+.proposal__justification {
+  font-size: var(--text-subheading);
+  margin: 0;
+}
+
+.proposal__liquidity {
+  color: var(--ink-muted);
+  margin: 0;
+}
+
+/* The SIMULATED label. High contrast and never subtle: it is the difference
+   between a demo and a claim about a real fill. */
+.badge--simulated {
+  display: inline-block;
+  margin-left: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius);
+  background: var(--warning);
+  color: #fff;
+  font-size: var(--text-caption);
+  letter-spacing: 0.08em;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.field__label {
+  font-weight: 600;
+}
+
+.field__hint {
+  color: var(--ink-muted);
+  font-weight: 400;
+}
+
+.field__input {
+  font: inherit;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.decision__actions,
+.ticket__actions {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.decision__hint {
+  color: var(--ink-muted);
+  margin: 0;
+}
+
+.ticket__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: var(--space-3);
+}
+
+.ticket__quotes {
+  color: var(--ink-muted);
+  margin: 0;
+}
