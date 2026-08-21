@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Fcmr.Surveillance.Domain</RootNamespace>
+    <AssemblyName>Fcmr.Surveillance.Domain</AssemblyName>
+  </PropertyGroup>
+
+  <!--
+    Deliberately dependency-free, on the same terms as Fcmr.Router.Decisions.
+
+    AC-6 requires the ranked queue to be reproducible for a fixed seed and input set. A ranking
+    that can only be reproduced by standing up a model is not a reproducible ranking; it is a
+    reproducible anecdote. Keeping the ordering logic here means the claim can be tested with no
+    model, no Cosmos, and no network.
+  -->
+
+</Project>

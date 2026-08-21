@@ -4,6 +4,7 @@
     <Project Path="src/Fcmr.Demo.Data/Fcmr.Demo.Data.csproj" />
     <Project Path="src/Fcmr.OrderRouting.Domain/Fcmr.OrderRouting.Domain.csproj" />
     <Project Path="src/Fcmr.Research.Domain/Fcmr.Research.Domain.csproj" />
+    <Project Path="src/Fcmr.Surveillance.Domain/Fcmr.Surveillance.Domain.csproj" />
     <Project Path="src/Fcmr.Router.Decisions/Fcmr.Router.Decisions.csproj" />
     <Project Path="src/approvals-service/approvals-service.csproj" />
     <Project Path="src/router-service/router-service.csproj" />
@@ -15,6 +16,7 @@
     <Project Path="tests/Fcmr.Persistence.Tests/Fcmr.Persistence.Tests.csproj" />
     <Project Path="tests/Fcmr.OrderRouting.Domain.Tests/Fcmr.OrderRouting.Domain.Tests.csproj" />
     <Project Path="tests/Fcmr.Research.Domain.Tests/Fcmr.Research.Domain.Tests.csproj" />
+    <Project Path="tests/Fcmr.Surveillance.Domain.Tests/Fcmr.Surveillance.Domain.Tests.csproj" />
     <Project Path="tests/Fcmr.Router.Decisions.Tests/Fcmr.Router.Decisions.Tests.csproj" />
     <Project Path="tests/Fcmr.RouterService.Tests/Fcmr.RouterService.Tests.csproj" />
   </Folder>
