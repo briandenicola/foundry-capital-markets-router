@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Fcmr.Research.Domain</RootNamespace>
+    <AssemblyName>Fcmr.Research.Domain</AssemblyName>
+  </PropertyGroup>
+
+  <!--
+    Deliberately dependency-free, on the same terms as Fcmr.Router.Decisions.
+
+    Attribution is the claim this demo cannot afford to get wrong, so the logic that decides
+    whether a claim is publishable must be testable without a search index, a model, or a network.
+    An SDK reference here would make that impossible.
+  -->
+
+</Project>

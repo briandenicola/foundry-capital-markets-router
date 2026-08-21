@@ -22,12 +22,13 @@ tasks:
     # needs the Cosmos emulator running. Listing unit projects by hand instead would silently stop
     # running the next one somebody adds.
     cmds:
-      - dotnet test --filter "FullyQualifiedName!~Fcmr.Contract.Tests&FullyQualifiedName!~Fcmr.Persistence.Tests" --collect:"XPlat Code Coverage" --results-directory ./TestResults
+      - dotnet test --filter "FullyQualifiedName!~Fcmr.Contract.Tests&FullyQualifiedName!~Fcmr.Persistence.Tests" --collect:"XPlat Code Coverage" --settings coverlet.runsettings --results-directory ./TestResults
 
   coverage:
-    desc: Enforce the 70% coverage threshold on router decision logic
+    desc: Enforce the 70% coverage threshold on the decision-critical assemblies
     cmds:
       - ./scripts/check-coverage.sh 70 Fcmr.Router.Decisions
+      - ./scripts/check-coverage.sh 70 Fcmr.Research.Domain
 
   contract:
     desc: Run contract tests against the published API contracts

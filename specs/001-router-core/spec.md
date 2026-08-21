@@ -236,7 +236,8 @@ demonstrated live, so I can withdraw my objection on evidence rather than assura
 | I. Human-in-the-loop | Yes | AC-2 |
 | II. Private by construction | Yes | AC-4 |
 | III. Attribution or refusal | Yes | AC-3 |
-| IV. Routed by cost and complexity | Yes | AC-1 |
-| V. Evidenced and auditable | Yes | AC-8 |
-| VI. Synthetic data only | Yes | T-021 generators |
-| VII. Identity without secrets | Yes | AC-4, T-009 |
+| IV. Applications never select models | Yes | AC-1, AC-7 |
+| V. Routed by cost and complexity | Yes | AC-1 |
+| VI. Evidenced and auditable | Yes | AC-8 |
+| VII. Synthetic data only | Yes | T-021 generators |
+| VIII. Identity without secrets | Yes | AC-4, T-009 |

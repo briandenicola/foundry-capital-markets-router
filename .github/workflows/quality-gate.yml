@@ -119,9 +119,12 @@ jobs:
         run: >-
           dotnet test --no-build --configuration Release
           --filter "FullyQualifiedName!~Fcmr.Contract.Tests&FullyQualifiedName!~Fcmr.Persistence.Tests"
-          --collect:"XPlat Code Coverage" --results-directory ./TestResults
+          --collect:"XPlat Code Coverage" --settings coverlet.runsettings
+          --results-directory ./TestResults
       - name: enforce coverage threshold
-        run: ./scripts/check-coverage.sh 70 Fcmr.Router.Decisions
+        run: |
+          ./scripts/check-coverage.sh 70 Fcmr.Router.Decisions
+          ./scripts/check-coverage.sh 70 Fcmr.Research.Domain
 
   contract-conformance:
     name: contract conformance

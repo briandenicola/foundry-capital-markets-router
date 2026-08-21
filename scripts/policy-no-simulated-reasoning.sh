@@ -15,15 +15,18 @@ set -euo pipefail
 
 fail=0
 
-# Directories where live inference is the product. Test projects are excluded: a unit test *must*
-# be able to fake a model client, and doing so there is correct rather than suspect.
+# All of src/. Test projects live under tests/ and are excluded by omission: a unit test *must* be
+# able to fake a model client, and doing so there is correct rather than suspect.
+#
+# Named directories were the original design and were wrong. src/Fcmr.Research.Domain was added and
+# the guard did not see it, because a list of directories only covers the directories someone
+# remembered to add. Scanning the tree fails closed for source that does not exist yet, which is
+# the only version of this that survives the repository growing.
 SCAN_DIRS=()
-for d in src/router-service src/research-service src/surveillance-service src/orderrouting-service src/webui/src; do
-  [ -d "$d" ] && SCAN_DIRS+=("$d")
-done
+[ -d src ] && SCAN_DIRS+=("src")
 
 if [ ${#SCAN_DIRS[@]} -eq 0 ]; then
-  echo "SKIP: no service or UI source directories present yet."
+  echo "SKIP: no source directory present yet."
   exit 0
 fi
 
