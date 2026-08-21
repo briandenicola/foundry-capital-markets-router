@@ -29,6 +29,7 @@ tasks:
     cmds:
       - ./scripts/check-coverage.sh 70 Fcmr.Router.Decisions
       - ./scripts/check-coverage.sh 70 Fcmr.Research.Domain
+      - ./scripts/check-coverage.sh 70 Fcmr.OrderRouting.Domain
 
   contract:
     desc: Run contract tests against the published API contracts

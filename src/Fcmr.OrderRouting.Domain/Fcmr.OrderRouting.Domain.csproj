@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Fcmr.OrderRouting.Domain</RootNamespace>
+    <AssemblyName>Fcmr.OrderRouting.Domain</AssemblyName>
+  </PropertyGroup>
+
+  <!--
+    Deliberately dependency-free, on the same terms as Fcmr.Router.Decisions.
+
+    Best-execution evaluation is deterministic code the agent explains, not a judgement the agent
+    makes. That only holds if it can be executed and tested without a model anywhere near it.
+  -->
+
+</Project>

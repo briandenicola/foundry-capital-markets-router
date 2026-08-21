@@ -125,6 +125,7 @@ jobs:
         run: |
           ./scripts/check-coverage.sh 70 Fcmr.Router.Decisions
           ./scripts/check-coverage.sh 70 Fcmr.Research.Domain
+          ./scripts/check-coverage.sh 70 Fcmr.OrderRouting.Domain
 
   contract-conformance:
     name: contract conformance
