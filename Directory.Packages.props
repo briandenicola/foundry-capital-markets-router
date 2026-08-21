@@ -8,7 +8,7 @@
   <ItemGroup Label="Azure">
     <PackageVersion Include="Azure.Identity" Version="1.21.0" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.AspNetCore" Version="1.6.0" />
-    <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.46.1" />
+    <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.62.1" />
     <!--
       Required by the Cosmos SDK at run time, not merely at build time. The SDK's build check that
       demands this reference can be switched off, and doing so produces a perfectly clean build
