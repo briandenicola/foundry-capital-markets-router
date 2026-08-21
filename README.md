@@ -239,7 +239,7 @@ scripts/            Bootstrap, diagram generation, policy gates, guards
 ## Non-negotiables
 
 Read [`.specify/memory/constitution.md`](.specify/memory/constitution.md) before contributing.
-Seven principles govern this repository; three are marked NON-NEGOTIABLE and no pull request may
+Eight principles govern this repository; four are marked NON-NEGOTIABLE and no pull request may
 weaken them:
 
 1. **Human-in-the-loop** on every consequential action. Propose, rank, draft, evidence — never
@@ -247,6 +247,8 @@ weaken them:
 2. **Private by construction** — no public data-plane access. `public_network_access_enabled = true`
    fails CI.
 3. **Attribution or refusal** — unattributable claims are withheld and reported, never guessed.
+4. **Applications never select models** — no service, prompt, or request names a model, a vendor,
+   or a deployment. Governance policy is evaluated *before* cost and complexity selection.
 
 If a change conflicts with one of these, the constitution has an amendment path: name the principle
 and open an ADR. Do not silently comply, and do not silently refuse.

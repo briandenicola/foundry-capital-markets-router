@@ -107,9 +107,20 @@ Mitigations:
 
 Mitigations:
 
-- `auditEvents` is append-only; no service identity holds update or delete rights.
-- Every step of the request lifecycle writes a record keyed by `correlationId`.
+- Every step of the request lifecycle writes a record keyed by `correlationId`, including the
+  refusals. A trail that records only what succeeded cannot answer what an auditor asks.
+- Writes use `CreateItemAsync` rather than upsert, so a duplicate id surfaces as a 409 instead of
+  silently replacing an earlier record.
+- Cosmos data-plane grants are scoped to individual containers, not the account
+  (`apps/cosmos-roles.tf`), and no role assignment anywhere is scoped above a single resource —
+  checked on every build by `scripts/policy-least-privilege-scope.sh`.
 - Reconstruction is a single query and is rehearsed against unrehearsed input.
+
+**Open gap — the append-only claim is not yet true.** `auditEvents` is currently granted with the
+built-in Cosmos Data Contributor role, which includes replace and delete. An append-only trail the
+writing identity can amend is not append-only, so this control does not presently hold. **T-019**
+replaces it with a custom role carrying create and read only. Recorded here rather than left for
+an audience to find, because the mitigation above would otherwise read as complete.
 
 ### T-8 — Non-synthetic data enters the environment
 

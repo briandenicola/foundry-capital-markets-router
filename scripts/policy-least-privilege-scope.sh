@@ -3,7 +3,8 @@
 # Fails if any role assignment is granted at subscription, resource-group, or management-group
 # scope.
 #
-# Principle VII (Least Privilege) is easy to satisfy on the day it is written and easy to lose
+# Principle VIII (Identity Without Secrets) mandates least-privilege RBAC. It is easy to satisfy on
+# the day it is written and easy to lose
 # afterwards, because the quickest way to fix a 403 is to widen the scope one level. A grant that
 # names one registry is a statement about what a service may do; the same grant at resource-group
 # scope silently covers every resource that group ever acquires, including ones that do not exist
@@ -84,7 +85,8 @@ fi
 
 if [ "$FAILED" -ne 0 ]; then
   echo ""
-  echo "Principle VII (Least Privilege): grants name one resource, never a container of them."
+  echo "Principle VIII (Identity Without Secrets) mandates least-privilege RBAC:"
+  echo "grants name one resource, never a container of them."
   echo "See .specify/memory/constitution.md and docs/threat-model.md."
   exit 1
 fi

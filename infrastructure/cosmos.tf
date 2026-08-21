@@ -19,7 +19,7 @@ resource "azurerm_cosmosdb_account" "this" {
   access_key_metadata_writes_enabled = false
 
   #checkov:skip=CKV_AZURE_140:False positive. The check reads local_authentication_disabled, which the azurerm provider deprecated in favour of local_authentication_enabled; both appear in the schema and only the latter is current. Local authentication is disabled above, and the emulator-only key path in CosmosClientFactory refuses to run outside Development. Suppressed because the finding is wrong, not because the control is missing.
-  #checkov:skip=CKV_AZURE_100:Customer-managed keys are not used. Data at rest is encrypted with platform-managed keys; the difference is key custody, not whether encryption happens. This account holds synthetic data only (Principle VI) and the demo makes no claim about customer key custody, so adding a CMK would mean a Key Vault key, an account-creation-time irreversible setting, and a Key Vault reachable from a private-network-only account -- complexity in service of a claim nobody is making. Revisit if the demo ever asserts BYOK.
+  #checkov:skip=CKV_AZURE_100:Customer-managed keys are not used. Data at rest is encrypted with platform-managed keys; the difference is key custody, not whether encryption happens. This account holds synthetic data only (Principle VII) and the demo makes no claim about customer key custody, so adding a CMK would mean a Key Vault key, an account-creation-time irreversible setting, and a Key Vault reachable from a private-network-only account -- complexity in service of a claim nobody is making. Revisit if the demo ever asserts BYOK.
 
   consistency_policy {
     consistency_level = "Session"

@@ -3,7 +3,8 @@
 Status: Accepted
 Date: 2026-08-18
 Supersedes: nothing
-Related: ADR-008 (approval domain boundaries), Principle VII (segregation of duties)
+Related: ADR-008 (approval domain boundaries), Principle I (human-in-the-loop, of which
+segregation of duties is part)
 
 ## Context
 
@@ -24,7 +25,7 @@ placeholder for a decision nobody has made.
 
 The placeholder is not merely incomplete. If a client supplies the identity that the
 segregation-of-duties check compares, then a single caller can present one object id when proposing
-and a different one when approving, and the control returns 200. Principle VII would hold only for
+and a different one when approving, and the control returns 200. Principle I would hold only for
 callers who chose not to defeat it. A control that depends on the good manners of the party it
 constrains is decoration, and this one is the most load-bearing claim in the demo.
 

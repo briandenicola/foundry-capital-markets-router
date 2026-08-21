@@ -1600,7 +1600,7 @@ export function srcArchitecture() {
     {
       title: 'src/Fcmr.Demo.Data',
       body:
-        'DemoDataGenerator.cs\nDemoUniverse.cs · DemoRecords.cs\nDeterministicRandom.cs\n\nSynthetic only, seeded, committed.\nThe generated volume is gitignored,\nso the repository carries the recipe\nrather than the data (Principle VI).\nNo real counterparty exists anywhere.',
+        'DemoDataGenerator.cs\nDemoUniverse.cs · DemoRecords.cs\nDeterministicRandom.cs\n\nSynthetic only, seeded, committed.\nThe generated volume is gitignored,\nso the repository carries the recipe\nrather than the data (Principle VII).\nNo real counterparty exists anywhere.',
       stroke: C.green,
       background: C.bgGreen,
     },
